@@ -1,0 +1,43 @@
+{
+  "name": "pi-aliyun",
+  "version": "0.1.0",
+  "description": "Alibaba Cloud OSS and Function Compute deployment skill for Pi",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quxian/pi-aliyun.git"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "pi-aliyun": "skills/aliyun/scripts/cli.mjs"
+  },
+  "files": [
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "skills": [
+      "./skills/aliyun"
+    ]
+  },
+  "scripts": {
+    "check": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@alicloud/alidns20150109": "^4.6.1",
+    "@alicloud/credentials": "^2.4.7",
+    "@alicloud/fc20230330": "^4.8.3",
+    "@alicloud/sts20150401": "^1.2.0",
+    "acme-client": "^5.4.0",
+    "ali-oss": "^6.23.0",
+    "mime-types": "^3.0.2",
+    "yazl": "^3.3.1"
+  }
+}

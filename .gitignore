@@ -1,0 +1,6 @@
+node_modules/
+.aliyun/
+.env
+.env.*
+*.pem
+*.key

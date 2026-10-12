@@ -60,7 +60,7 @@ async function tableInfo(data, input) {
 
 export async function inspectDatabase(clients, config) {
   const result = { instance: config.database.instance, tables: [], issues: [] };
-  // Collect independent permission failures so the operator can request them together.
+  // Report independent configuration and permission failures together.
   try { await verifyDatabaseRole(clients.ram, config); result.runtimeRole = 'ready'; }
   catch (error) {
     if (error.code === 'EntityNotExist.Role') result.runtimeRole = 'will-create';
@@ -74,7 +74,7 @@ export async function inspectDatabase(clients, config) {
       const current = await tableInfo(clients.data, input);
       result.tables.push({ name: input.tableMeta.tableName, state: !current ? 'will-create' : current.tableStatus === 1 ? 'ready' : 'not-active' });
     }
-  } catch (error) { result.issues.push({ component: 'tablestore', code: error.code || 'ConfigurationMismatch', message: error.code ? 'Review Tablestore service activation and the deployment statements in db-plan' : error.message }); }
+  } catch (error) { result.issues.push({ component: 'tablestore', code: error.code || 'ConfigurationMismatch', message: error.code ? 'Review Tablestore service activation and the account deployment policy' : error.message }); }
   return result;
 }
 

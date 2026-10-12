@@ -51,7 +51,8 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - `schedule` 将项目配置登记到持久的续期清单；`renew-all` 检查清单内所有项目。
 - `db-plan` 输出数据库、运行角色、完整权限增量及费用估算；`db-inspect` 只读检查当前资源并合并报告问题。
 - `db-approve --fingerprint ...` 记录已获得的用户确认；`db-setup` 创建/检查数据库，`deploy` 也会执行这一步。
-- `db-role` 是单独的管理员入口，初始化已确认的运行角色；不会由普通部署自动调用。
+- `db-role` 是没有平台配置时的独立管理员入口；已安装平台的 `deploy` 会调用受控授权函数初始化项目角色。
+- `platform` 查看当前环境的平台配置；`project-init --project pi-aliyun-name` 在独立持久目录创建项目配置。
 
 [配置模板](skills/aliyun/assets/aliyun.example.json) 使用静态前端和已打包的 Node HTTP 后端作为示例，按实际项目调整：
 
@@ -90,9 +91,48 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - FC：读取/创建/更新函数、弹性策略和实例配额、HTTP 触发器、自定义域名；配置运行时角色时还需要传递该角色的权限。
 - AliDNS：读取域名记录、添加/更新记录；启用 ACME 时还需要删除本次创建的 TXT 记录。
 
-工具不会自动授予权限；账号需已开通所使用的云服务。FC 运行时角色与部署身份分开，应用通过运行时角色取得访问云服务的临时凭据。数据库密码等业务秘密使用 `backend.envFrom`，不要把部署凭据转交应用。这些业务值会写入 FC 环境变量，不会打印到 CLI 或保存到生成的本地产物。
+账号需已开通所使用的云服务。FC 运行时角色与部署身份分开，应用通过运行时角色取得访问云服务的临时凭据。数据库密码等业务秘密使用 `backend.envFrom`，不要把部署凭据转交应用。这些业务值会写入 FC 环境变量，不会打印到 CLI 或保存到生成的本地产物。
 
-同一部署身份管理多个项目时，可执行 `policy --config aliyun.json > deployment-policy.json`。管理员审核后绑定到部署角色，范围内的网站可直接部署。OSS 限定到 `pi-aliyun-*-账号ID` 网站 Bucket，AliDNS 限定到 `dns.zone`，FC 和证书保留所需账号级授权，不包含 RAM 管理权。配置数据库会追加该实例和项目表/角色的权限；合并到已有策略时保留其它项目授权。新项目使用不同的资源名和域名；标签防止误用，不构成 Agent 身份隔离。新的数据库运行角色等权限与费用一起确认。
+网站权限可执行 `policy --config aliyun.json > deployment-policy.json` 供管理员审核。OSS 限定到 `pi-aliyun-*-账号ID` 网站 Bucket，AliDNS 限定到 `dns.zone`，FC 和证书保留所需账号级授权，不包含 RAM 管理权。没有平台时，数据库授权需逐项目初始化；长期管理多个项目应安装下述平台。新项目使用不同的资源名和域名；标签防止误用，不构成 Agent 身份隔离。
+
+## 一次安装，跨项目部署
+
+平台配置与项目都在能力包外；不使用任何聊天产品的接口、账号或会话 ID。相同 CLI 可用于终端、CI 或任意 Agent。环境管理员准备服务用户的 `~/.config/pi-aliyun/platform.json`：
+
+```json
+{
+  "version": 1,
+  "accountId": "1234567890123456",
+  "region": "cn-beijing",
+  "zone": "example.com",
+  "instance": "pi-data-ssd",
+  "projectRoot": "/srv/projects",
+  "authorizerFunction": "pi-aliyun-authorizer",
+  "deployerRole": "pi-aliyun-deployer",
+  "acmeEmail": "operator@example.com"
+}
+```
+
+`projectRoot` 必须是服务用户可写的独立持久目录；不要选择临时聊天目录或包安装目录。此配置不含密钥，不代表用户已批准所有未来费用。`project-init` 根据它生成配置，但仍需完成构建命令、数据库定义和域名冲突检查。ACME 条款同意应沿用用户已批准的范围，不能仅因配置了邮箱就自动同意。
+
+管理员首次安装：
+
+```sh
+pi-aliyun platform-plan --profile platform.json
+pi-aliyun platform-bundle --profile platform.json --output platform-bundle
+# 用户审核上面生成的具体权限、函数规格和新增费用后：
+pi-aliyun platform-bootstrap --profile platform.json --bundle platform-bundle --fingerprint <已批准指纹>
+```
+
+最后一步使用管理员身份的官方 SDK 凭据链。现有 OSS/FC/DNS/证书策略保持原样；另附加 `PiAliyunPlatformDeploy` 策略，不逐项目改写旧策略。它允许在指定实例中管理 `pi_pi_aliyun_*` 表、检查/传递 `pi-db-pi-aliyun-*` 角色，并调用授权函数。实际数据库实例必须预先存在；平台本身不采购新的数据库。
+
+授权函数无 HTTP 触发器，只通过 RAM 签名的 FC API 调用。它接受项目名，固定生成只信任 FC 的角色，以及该项目表前缀的数据行读写策略；拒绝调用方提供账号、策略、信任实体或执行代码。仅授权函数拥有指定前缀的 RAM 创建/绑定能力，且不能更改现有策略版本、删除角色、管理用户/密钥。部署身份被显式拒绝修改授权函数和传递其高权限角色。管理员更新授权函数需要重新审核；升级 Agent 中的包不会自动改动授权函数。
+
+安装后必须用**普通部署身份**验证：调用授权函数成功；更新授权函数被拒绝；把授权函数角色传给业务函数被拒绝；两个项目运行角色不能读对方的表。若云端保护未生效，不得接受平台安装完成，应由管理员修正后再开放。函数资源级授权参见 [FC 权限表](https://help.aliyun.com/en/functioncompute/policies-and-sample-policies)。
+
+授权函数默认 0.1 vCPU、256 MiB、最多 1 实例、最低 0、并发 1、60 秒超时，无定时调用、日志服务或保活。只有项目角色需初始化时调用，普通更新检查现有角色后跳过它。FC 对有调用的小时设最低计费，费用按实际用量计算，见 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)。RAM 策略范围不是消费硬上限。
+
+后续项目流程为 `project-init` → 开发和构建 → 一次新费用确认 → `db-approve` → `deploy` → 真实读写与重发版验证 → `schedule`。范围内的新项目不再人工创建角色或复制 RAM JSON。更换账号、地域、数据库种类或扩大资源权限时，先重新审核平台范围。同一部署身份能管理多个项目；单个项目的运行角色只读写自己的表，这不等于不同 Agent 的部署身份隔离。
 
 前端 Bucket 只放可公开的网站文件。OSS 新建 Bucket 默认阻止公共访问，部署会关闭本项目专用 Bucket 的这一开关，再设置公共读；不会修改账号级开关。如果账号级策略阻止公共访问，部署会失败，需要管理员按实际网站托管需求处理。参见 [OSS 静态网站托管](https://help.aliyun.com/zh/oss/user-guide/hosting-static-websites)。
 

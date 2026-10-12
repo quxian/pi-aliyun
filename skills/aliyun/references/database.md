@@ -5,7 +5,7 @@
 | 业务需要 | 默认选择 | 创建与连接 |
 | --- | --- | --- |
 | 无需保存用户数据 | 不创建数据库 | 静态内容放 OSS |
-| 按用户/租户、ID、时间区间读取记录，单行条件更新能满足一致性 | Tablestore CU 模式，在线应用默认 SSD | CLI 创建实例和表，配置 FC 连接元数据，运行角色需管理员初始化 |
+| 按用户/租户、ID、时间区间读取记录，单行条件更新能满足一致性 | Tablestore CU 模式，在线应用默认 SSD | CLI 创建实例和表，配置 FC 连接元数据，平台自动初始化运行角色；未安装平台时由管理员初始化 |
 | 写多读少的日志、归档，能接受较高读取延迟 | Tablestore CU 模式 HYBRID | 同上；实例类型创建后不可直接修改 |
 | SQL/ORM、复杂关联、跨表事务，或余额/库存等强一致业务 | 已有 RDS MySQL/PostgreSQL 优先 | 项目独立数据库和普通账号，FC 同地域 VPC，秘密通过 `backend.envFrom` 注入 |
 | 必须新建关系型实例 | 核实 RDS 普惠年付与普通实例/Serverless 实际报价 | 先生成一次性费用/权限确认；此版 CLI 不下单 RDS，也不执行 SQL 迁移 |
@@ -46,7 +46,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-plan
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-inspect
 # 一次性获得用户对费用、网络和全部权限变化的确认后：
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-approve --fingerprint <已确认计划的指纹>
-# 单独授权的管理员运行一次，或在 RAM 应用 db-plan 的角色和策略：
+# 未安装跨项目平台时，单独授权的管理员运行（平台部署无需此步）：
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-role
 # 普通部署身份；也可直接 deploy，一并创建数据库并发布应用：
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-setup
@@ -63,7 +63,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - 部署角色需要实例列表/详情/创建、本项目前缀的建表/查结构、读取上述角色/策略及仅向 FC 传递该角色的 `PassRole`。不增加 RAM 管理权，也不需要业务数据读写权。
 - 更新已有部署策略时追加这些语句，保留其它项目；不要拿某个项目的完整 `policy` 覆盖其它项目的数据库授权。
 
-`db-role` 自动化管理员的创建/绑定操作，拒绝覆盖不同的已有角色或策略；它不会替普通部署身份提升权限。没有管理员 API 身份时，首次授权需管理员通过控制台或其它已授权入口完成。新项目的独立角色可能需新增授权；与项目费用一起确认。以后同一项目在已批准范围内发布不再重复确认。
+已安装[跨项目平台](../../../../README.md#一次安装跨项目部署)时，普通 `deploy` 调用受保护的授权函数，为新项目生成固定的数据角色，不再逐项目找管理员。平台的共享实例、项目命名范围和授权函数由管理员一次部署；新项目仍需确认实际新增费用。未安装平台时，`db-role` 使用管理员身份创建/绑定角色，拒绝覆盖不同的已有角色或策略；普通部署身份没有 RAM 管理权。
 
 应用使用 FC 临时凭据；部署凭据始终留在部署主机。CLI 注入非敏感变量 `TABLESTORE_INSTANCE`、`TABLESTORE_ENDPOINT` 和 JSON 对象 `TABLESTORE_TABLES`。默认使用需 RAM 签名的 HTTPS 公网端点（数据并非公开可读），避免仅为小流量引入 VPC/NAT；估算包含公网下行。
 

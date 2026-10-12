@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "project": "pi-aliyun-demo",
+  "region": "cn-beijing",
+  "accountId": "1234567890123456",
+  "frontend": {
+    "bucket": "replace-with-your-unique-demo-bucket",
+    "dir": "dist/frontend",
+    "build": { "cwd": ".", "command": ["node", "build.mjs"] },
+    "domain": "demo.example.com",
+    "spa": false
+  },
+  "backend": {
+    "functionName": "pi-aliyun-demo",
+    "codeDir": "dist/backend",
+    "domain": "demo-api.example.com",
+    "runtime": "custom.debian10",
+    "command": ["/var/fc/lang/nodejs20/bin/node", "server.mjs"],
+    "port": 9000,
+    "cpu": 0.1,
+    "memorySize": 128,
+    "timeout": 15,
+    "instanceConcurrency": 5,
+    "maxInstances": 1,
+    "environment": { "NODE_ENV": "production" }
+  },
+  "dns": { "zone": "example.com", "ttl": 600 },
+  "tls": {
+    "certFile": ".aliyun/tls/fullchain.pem",
+    "keyFile": ".aliyun/tls/privkey.pem",
+    "acme": {
+      "email": "replace-with-your-email@example.com",
+      "accountKeyFile": ".aliyun/tls/account-key.pem",
+      "agreeToTerms": false
+    }
+  }
+}

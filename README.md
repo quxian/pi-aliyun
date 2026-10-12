@@ -4,6 +4,8 @@
 
 包内包含原生 `aliyun` skill、配置模板和可独立运行的 Node CLI，不依赖宿主应用，也不绑定前后端框架。
 
+想直接跑通前后端部署，可从[云端回声示例](examples/hello-cloud/README.md)开始：静态页面调用普通 Node HTTP 接口，无数据库、无应用运行依赖。
+
 ## 安装
 
 ```sh
@@ -74,7 +76,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 
 通过 Client Pi 使用时，凭据要放在运行 Client Pi 的服务进程环境或该服务用户可读的 SDK 凭据文件中；放在浏览器所在电脑的环境变量里不会传给服务器上的部署进程。实例 RAM 角色也绑定到实际执行部署的云主机。
 
-使用限制到本项目资源的 RAM 身份。按对应官方 RAM 文档限定资源范围，所需操作包括：
+尽量将 RAM 身份的权限限制到本项目资源。OSS 可指定专用 Bucket，AliDNS 可指定域名区域；部分 FC 接口只支持账号级资源授权，不能仅凭函数名就认为已隔离权限。实例角色也不是 Agent 级隔离，同机有权访问实例元数据的进程可能取得相同权限。按对应官方 RAM 文档限定资源范围，所需操作包括：
 
 - STS `GetCallerIdentity`：核对目标账号。
 - OSS：读取/创建 Bucket、读取/写入标签、设置 ACL 和静态网站、上传对象、`PutCname`。不需要删除对象。

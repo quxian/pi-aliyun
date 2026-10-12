@@ -74,9 +74,11 @@ export async function deployFrontend(oss, config, files, tls) {
     if (tags.tag['pi-aliyun-project'] !== config.project) throw new Error('Existing OSS bucket is not managed by this project; choose a new dedicated bucket');
   } catch (error) {
     if (error.code !== 'NoSuchBucket') throw error;
-    await oss.putBucket(f.bucket, { acl: 'public-read', storageClass: 'Standard' });
+    await oss.putBucket(f.bucket, { acl: 'private', storageClass: 'Standard' });
     await oss.putBucketTags(f.bucket, { 'pi-aliyun-project': config.project });
   }
+  // New OSS buckets block public access by default; this dedicated website bucket must serve anonymous readers.
+  await oss.request({ method: 'PUT', bucket: f.bucket, subres: 'publicAccessBlock', content: '<PublicAccessBlockConfiguration><BlockPublicAccess>false</BlockPublicAccess></PublicAccessBlockConfiguration>', mime: 'xml', successStatuses: [200] });
   await oss.putBucketACL(f.bucket, 'public-read');
   // The SDK's website helper omits ErrorDocument.HttpStatus; its signed request API preserves it.
   await oss.request({ method: 'PUT', bucket: f.bucket, subres: 'website', content: websiteXml(f.spa), mime: 'xml', successStatuses: [200] });

@@ -79,12 +79,14 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 尽量将 RAM 身份的权限限制到本项目资源。OSS 可指定专用 Bucket，AliDNS 可指定域名区域；部分 FC 接口只支持账号级资源授权，不能仅凭函数名就认为已隔离权限。实例角色也不是 Agent 级隔离，同机有权访问实例元数据的进程可能取得相同权限。按对应官方 RAM 文档限定资源范围，所需操作包括：
 
 - STS `GetCallerIdentity`：核对目标账号。
-- OSS：读取/创建 Bucket、读取/写入标签、设置 ACL 和静态网站、上传对象、`PutCname`。不需要删除对象。
+- OSS：读取/创建 Bucket、读取/写入标签、`PutBucketPublicAccessBlock`、设置 ACL 和静态网站、上传对象、`PutCname`。不需要删除对象。
 - OSS 证书托管还需要 `yundun-cert:DescribeSSLCertificatePrivateKey`、`yundun-cert:DescribeSSLCertificatePublicKeyDetail`、`yundun-cert:CreateSSLCertificate`，见 `PutCname` 文档。
 - FC：读取/创建/更新函数、弹性策略和实例配额、HTTP 触发器、自定义域名；配置运行时角色时还需要传递该角色的权限。
 - AliDNS：读取域名记录、添加/更新记录；启用 ACME 时还需要删除本次创建的 TXT 记录。
 
 工具不会自动授予权限；账号需已开通所使用的云服务。FC 运行时角色与部署身份分开，应用通过运行时角色取得访问云服务的临时凭据。数据库密码等业务秘密使用 `backend.envFrom`，不要把部署凭据转交应用。这些业务值会写入 FC 环境变量，不会打印到 CLI 或保存到生成的本地产物。
+
+前端 Bucket 只放可公开的网站文件。OSS 新建 Bucket 默认阻止公共访问，部署会关闭本项目专用 Bucket 的这一开关，再设置公共读；不会修改账号级开关。如果账号级策略阻止公共访问，部署会失败，需要管理员按实际网站托管需求处理。参见 [OSS 静态网站托管](https://help.aliyun.com/zh/oss/user-guide/hosting-static-websites)。
 
 ## 域名和 HTTPS
 

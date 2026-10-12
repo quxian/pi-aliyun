@@ -106,22 +106,32 @@ try {
   await assert.rejects(ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com'), /conflicting/);
 
   let bucketExists = false;
+  let blockPublicAccess = true;
   let tags = {};
   const uploads = [];
   const oss = {
     getBucketInfo: async () => { if (!bucketExists) throw missing('NoSuchBucket'); return { bucket: { Owner: { ID: config.accountId }, Location: `oss-${config.region}` } }; },
-    putBucket: async () => { bucketExists = true; },
+    putBucket: async (_name, options) => { assert.equal(options.acl, 'private'); bucketExists = true; },
     putBucketTags: async (_name, value) => { tags = value; },
     getBucketTags: async () => ({ tag: tags }),
-    putBucketACL: async (_name, acl) => assert.equal(acl, 'public-read'),
-    request: async (value) => { assert([200].includes(value.successStatuses[0])); },
+    putBucketACL: async (_name, acl) => { assert.equal(blockPublicAccess, false); assert.equal(acl, 'public-read'); },
+    request: async (value) => {
+      assert([200].includes(value.successStatuses[0]));
+      if (value.subres === 'publicAccessBlock') {
+        assert.equal(value.bucket, config.frontend.bucket);
+        assert.match(value.content, /<BlockPublicAccess>false<\/BlockPublicAccess>/);
+        blockPublicAccess = false;
+      }
+    },
     put: async (key) => uploads.push(key),
   };
   await deployFrontend(oss, config, artifacts.frontendFiles, tls);
   assert.deepEqual(uploads, ['assets/app-1234abcd.js', 'index.html']);
   await deployFrontend(oss, config, artifacts.frontendFiles, tls);
   tags = {};
+  blockPublicAccess = true;
   await assert.rejects(deployFrontend(oss, config, artifacts.frontendFiles, tls), /not managed/);
+  assert.equal(blockPublicAccess, true);
   console.log('Smoke passed: local CLI/build/archive, SDK models, FC create/update, OSS publication order/ownership, DNS idempotence/conflicts. No cloud APIs called.');
 } finally {
   delete process.env.PI_ALIYUN_SMOKE_DATABASE;

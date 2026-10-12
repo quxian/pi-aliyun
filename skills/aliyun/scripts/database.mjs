@@ -85,7 +85,7 @@ export async function verifyDatabaseRole(ram, config) {
   const attached = (await ram.listPoliciesForRole(new RAM.ListPoliciesForRoleRequest({ roleName: access.roleName }))).body?.policies?.policy;
   if (!attached || attached.length !== 1 || attached[0].policyName !== access.policyName || attached[0].policyType !== 'Custom') throw new Error('Database runtime role must have only its project policy from db-plan');
   const policy = (await ram.getPolicy(new RAM.GetPolicyRequest({ policyType: 'Custom', policyName: access.policyName }))).body?.policy;
-  const version = (await ram.getPolicyVersion(new RAM.GetPolicyVersionRequest({ policyType: 'Custom', policyName: access.policyName, versionId: policy?.defaultVersionId }))).body?.policyVersion;
+  const version = (await ram.getPolicyVersion(new RAM.GetPolicyVersionRequest({ policyType: 'Custom', policyName: access.policyName, versionId: policy?.defaultVersion }))).body?.policyVersion;
   if (!policyEqual(version?.policyDocument, access.runtimePolicy)) throw new Error('Database runtime policy differs from the approved project scope');
 }
 
@@ -104,7 +104,7 @@ export async function bootstrapDatabaseRole(ram, config) {
   }
   try {
     const policy = (await ram.getPolicy(new RAM.GetPolicyRequest({ policyType: 'Custom', policyName: a.policyName }))).body?.policy;
-    const version = (await ram.getPolicyVersion(new RAM.GetPolicyVersionRequest({ policyType: 'Custom', policyName: a.policyName, versionId: policy?.defaultVersionId }))).body?.policyVersion;
+    const version = (await ram.getPolicyVersion(new RAM.GetPolicyVersionRequest({ policyType: 'Custom', policyName: a.policyName, versionId: policy?.defaultVersion }))).body?.policyVersion;
     if (!policyEqual(version?.policyDocument, a.runtimePolicy)) throw new Error('Existing policy differs; refusing to replace permissions');
   } catch (error) {
     if (error.code !== 'EntityNotExist.Policy') throw error;
@@ -132,20 +132,31 @@ export async function inspectDatabase(clients, config) {
   return result;
 }
 
-export async function provisionDatabase(clients, config, { wait = () => delay(3000), attempts = 20 } = {}) {
+export async function provisionDatabase(clients, config, { wait = () => delay(3000), attempts = 20, dnsAttempts = 200 } = {}) {
   await verifyDatabaseRole(clients.ram, config);
   const exists = await instanceInfo(clients.control, config);
   const inputs = config.database.tables.map((table) => createTableInput(config, table));
+  const describe = async (input) => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await tableInfo(clients.data, input); }
+      catch (error) {
+        // A newly created instance can be visible in the control API before its DNS propagates.
+        if (error.code !== 'NetworkingError' || error.syscall !== 'getaddrinfo' || attempt >= dnsAttempts - 1) throw error;
+        if (attempt === 0) console.log(`Waiting for Tablestore DNS: ${config.database.instance}`);
+        await wait();
+      }
+    }
+  };
   // Validate all existing tables before creating anything, rather than partially applying a changed schema.
   const missing = [];
   for (const input of inputs) {
-    const current = exists ? await tableInfo(clients.data, input) : undefined;
+    const current = exists ? await describe(input) : undefined;
     if (!current) missing.push(input);
     else if (current.tableStatus !== 1) throw new Error(`Table ${input.tableMeta.tableName} is not active; retry after initialization or resolve its status`);
   }
   if (!exists) {
     const created = await clients.control.createInstance(new OTS.CreateInstanceRequest({ instanceName: config.database.instance, clusterType: config.database.clusterType, instanceDescription: marker,
-      networkTypeACL: ['INTERNET', 'VPC'] }));
+      networkTypeACL: ['INTERNET', 'VPC'], networkSourceACL: [] }));
     if (created?.body?.code && String(created.body.code) !== '200') throw Object.assign(new Error('Tablestore instance creation failed'), { code: created.body.code, data: {} });
     let ready;
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -155,6 +166,7 @@ export async function provisionDatabase(clients, config, { wait = () => delay(30
     if (!ready) throw new Error('Tablestore creation is pending; retry after it becomes available');
   }
   for (const input of missing) {
+    if (!exists && await describe(input)) continue;
     await clients.data('createTable', input);
     let ready;
     for (let attempt = 0; attempt < attempts; attempt++) {

@@ -52,9 +52,9 @@ try {
   const ram = {
     getRole: async () => { if (!roleExists) throw missing('EntityNotExist.Role'); return { body: { role: { description: `Managed by pi-aliyun: ${config.project}`, assumeRolePolicyDocument: JSON.stringify(a.trustPolicy) } } }; },
     createRole: async (request) => { request.validate(); roleExists = true; },
-    getPolicy: async () => { if (!policyExists) throw missing('EntityNotExist.Policy'); return { body: { policy: { defaultVersionId: 'v1' } } }; },
+    getPolicy: async () => { if (!policyExists) throw missing('EntityNotExist.Policy'); return { body: { policy: { defaultVersion: 'v1' } } }; },
     createPolicy: async (request) => { request.validate(); policyExists = true; },
-    getPolicyVersion: async () => ({ body: { policyVersion: { policyDocument: JSON.stringify(a.runtimePolicy) } } }),
+    getPolicyVersion: async (request) => { assert.equal(request.versionId, 'v1'); return { body: { policyVersion: { policyDocument: JSON.stringify(a.runtimePolicy) } } }; },
     attachPolicyToRole: async (request) => { request.validate(); attached = true; },
     listPoliciesForRole: async () => ({ body: { policies: { policy: attached ? [{ policyName: a.policyName, policyType: 'Custom' }] : [] } } }),
   };
@@ -72,16 +72,17 @@ try {
   await verifyDatabaseRole(consoleRam, config);
   consoleTrust.Statement[0].Principal.Service = ['fc.aliyuncs.com', 'ecs.aliyuncs.com'];
   await assert.rejects(verifyDatabaseRole(consoleRam, config), /trust differs/);
-  let exists = false; let tableExists = false; const writes = [];
+  let exists = false; let tableExists = false; let dnsPending = true; const writes = [];
   const clients = { ram,
     control: {
       listInstances: async () => ({ body: { instances: exists ? [{ instanceName: config.database.instance }] : [] } }),
       getInstance: async () => ({ body: { userId: config.accountId, regionId: config.region, instanceDescription: 'Managed by pi-aliyun databases', instanceSpecification: 'SSD', paymentType: 'PayAsYouGo', instanceStatus: 'normal' } }),
-      createInstance: async (request) => { request.validate(); assert.equal(request.clusterType, 'SSD'); writes.push('instance'); exists = true; },
+      createInstance: async (request) => { request.validate(); assert.equal(request.clusterType, 'SSD'); assert.deepEqual(request.networkTypeACL, ['INTERNET', 'VPC']); assert.deepEqual(request.networkSourceACL, []); writes.push('instance'); exists = true; },
     },
     data: async (action, params) => {
       if (action === 'createTable') { assert.equal(params.reservedThroughput.capacityUnit.read, 0); writes.push('table'); tableExists = true; return {}; }
       assert.equal(action, 'describeTable');
+      if (dnsPending) { dnsPending = false; throw Object.assign(new Error('DNS pending'), { code: 'NetworkingError', syscall: 'getaddrinfo' }); }
       if (!tableExists) throw missing('OTSObjectNotExist');
       return actual;
     },
@@ -89,7 +90,9 @@ try {
   const before = await inspectDatabase(clients, config);
   assert.equal(before.instanceState, 'will-create');
   assert.deepEqual(writes, []);
-  await provisionDatabase(clients, config, { wait: async () => {} });
+  let waits = 0;
+  await provisionDatabase(clients, config, { wait: async () => { waits++; } });
+  assert.equal(waits, 1);
   await provisionDatabase(clients, config, { wait: async () => {} });
   assert.deepEqual(writes, ['instance', 'table']);
   const bothFail = await inspectDatabase({ ...clients, ram: { ...ram, getRole: async () => { throw missing('Forbidden'); } }, control: { listInstances: async () => { throw missing('Forbidden'); } } }, config);

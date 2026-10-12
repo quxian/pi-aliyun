@@ -104,6 +104,14 @@ try {
   assert.throws(() => databaseForRequest({ headers: {} }, env), /credentials/);
   const db = databaseForRequest({ headers: { 'x-fc-access-key-id': 'temporary-id', 'x-fc-access-key-secret': 'temporary-secret', 'x-fc-security-token': 'temporary-token' } }, env);
   assert.equal(db.client.config.stsToken, 'temporary-token');
+  const protobufError = { httpResponse: { statusCode: 404, headers: {}, body: Proto.main.proto.Error.encode({ code: 'OTSObjectNotExist', message: 'Requested table does not exist.' }).finish() } };
+  db.client.extractError(protobufError);
+  assert.equal(protobufError.error.code, 'OTSObjectNotExist');
+  assert.equal(protobufError.error.statusCode, 404);
+  const xmlError = { httpResponse: { statusCode: 403, headers: {}, body: Buffer.from('<Error><Code>OTSAuthFailed</Code><Message>Denied</Message></Error>') } };
+  db.client.extractError(xmlError);
+  assert.equal(xmlError.error.code, 403);
+  assert.equal(xmlError.error.statusCode, 403);
   const next = databaseForRequest({ headers: { 'x-fc-access-key-id': 'next-id', 'x-fc-access-key-secret': 'next-secret', 'x-fc-security-token': 'next-token' } }, env);
   assert.equal(next.client.config.stsToken, 'next-token');
   assert.equal(db.client.config.stsToken, 'temporary-token');

@@ -4,6 +4,7 @@ import TableStore from 'tablestore';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { databaseAccess, databaseEnvironment, databaseNames } from './database-plan.mjs';
+import { createTablestoreClient } from '../assets/tablestore-runtime.mjs';
 
 const Client = (module) => module.default || module;
 const marker = 'Managed by pi-aliyun databases';
@@ -15,7 +16,7 @@ export function createDatabaseClients(config, credential) {
     data: async (action, params) => {
       // Resolve again for every operation so a long-running deployment never pins an expired STS token.
       const key = await credential.getCredential();
-      const client = new TableStore.Client({ accessKeyId: key.accessKeyId, secretAccessKey: key.accessKeySecret, stsToken: key.securityToken,
+      const client = createTablestoreClient({ accessKeyId: key.accessKeyId, secretAccessKey: key.accessKeySecret, stsToken: key.securityToken,
         endpoint: databaseEnvironment(config).TABLESTORE_ENDPOINT, instancename: config.database.instance,
         maxRetries: 2, httpOptions: { timeout: 15000 } });
       return invoke(client, action, params);

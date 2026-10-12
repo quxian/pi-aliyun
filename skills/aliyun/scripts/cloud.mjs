@@ -16,7 +16,8 @@ export async function createClients(config, { services = ['dns', 'fc', 'oss'] } 
   if (identity.body?.accountId !== config.accountId) throw new Error('Credential account does not match config.accountId; no resources were changed');
   const clients = { credential };
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
-  if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https' });
+  // Uploading and processing a dependency ZIP can outlast the SDK's short default timeout.
+  if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https', connectTimeout: 30000, readTimeout: 120000 });
   if (services.includes('oss') && config.frontend) {
     const resolveCredential = async () => {
       const result = await credential.getCredential();

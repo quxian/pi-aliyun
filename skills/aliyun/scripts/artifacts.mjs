@@ -68,9 +68,13 @@ export async function buildArtifacts(config) {
     result.frontendFiles = await collectFiles(config.frontend.dir);
     if (!result.frontendFiles.some((item) => item.key === 'index.html')) throw new Error('Frontend output requires index.html at its root');
   }
+  const backendFiles = config.backend ? await collectFiles(config.backend.codeDir) : [];
+  // Check the same file inventory that will be uploaded, before constructing a ZIP.
+  const sensitivePaths = new Set([config.tls.certFile, config.tls.keyFile, config.tls.acme?.accountKeyFile].filter(Boolean));
+  for (const file of [...(result.frontendFiles || []), ...backendFiles]) {
+    if (sensitivePaths.has(file.path)) throw new Error('TLS material must be outside deployment output directories');
+  }
   if (config.backend) {
-    const files = await collectFiles(config.backend.codeDir);
-    result.backendArchive = await createArchive(files);
     result.environment = { ...config.backend.environment };
     for (const [name, source] of Object.entries(config.backend.envFrom)) {
       if (!Object.hasOwn(process.env, source) || !process.env[source]) throw new Error(`Missing environment variable: ${source}`);
@@ -78,14 +82,10 @@ export async function buildArtifacts(config) {
     }
     if (config.backend.command[0].startsWith('/code/')) {
       const entrypoint = config.backend.command[0].slice('/code/'.length);
-      if (!files.some((file) => file.key === entrypoint)) throw new Error('Backend command executable under /code must exist in codeDir');
+      if (!backendFiles.some((file) => file.key === entrypoint)) throw new Error('Backend command executable under /code must exist in codeDir');
       await access(join(config.backend.codeDir, entrypoint), 1).catch(() => { throw new Error('Backend executable needs its executable permission bit'); });
     }
-  }
-  // Explicitly prevent even unusually named configured TLS files from entering an upload.
-  const sensitivePaths = new Set([config.tls.certFile, config.tls.keyFile, config.tls.acme?.accountKeyFile].filter(Boolean));
-  for (const files of [result.frontendFiles, config.backend ? await collectFiles(config.backend.codeDir) : []]) {
-    if (files?.some((file) => sensitivePaths.has(file.path))) throw new Error('TLS material must be outside deployment output directories');
+    result.backendArchive = await createArchive(backendFiles);
   }
   return result;
 }

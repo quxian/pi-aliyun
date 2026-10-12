@@ -6,7 +6,7 @@ import * as CAS from '@alicloud/cas20200407';
 import { setTimeout as delay } from 'node:timers/promises';
 import { domainRecords, isMissing } from './cloud.mjs';
 import { databaseNames } from './database-plan.mjs';
-import { createDatabaseClients } from './database.mjs';
+import { createDatabaseClients, getInstance } from './database.mjs';
 import { readResources, saveResources } from './resources.mjs';
 import { applicationCertificates, checkCertificateBindings } from './certificates.mjs';
 import { unregisterRenewal } from './renewal.mjs';
@@ -18,15 +18,6 @@ const array = value => value === undefined ? [] : Array.isArray(value) ? value :
 const decodePolicy = value => { try { return JSON.parse(value); } catch { return JSON.parse(decodeURIComponent(value)); } };
 export const dnsTargets = config => [config.frontend && { domain: config.frontend.domain, value: `${config.frontend.bucket}.oss-${config.region}.aliyuncs.com` },
   config.backend && { domain: config.backend.domain, value: `${config.accountId}.${config.region}.fc.aliyuncs.com` }].filter(Boolean);
-
-export async function getInstance(control, name) {
-  let nextToken;
-  do {
-    const { body } = await control.listInstances(new OTS.ListInstancesRequest({ instanceName: name, maxResults: 100, nextToken }));
-    if (body.instances?.some(item => item.instanceName === name)) return (await control.getInstance(new OTS.GetInstanceRequest({ instanceName: name }))).body;
-    nextToken = body.nextToken;
-  } while (nextToken);
-}
 
 export async function inspectApplication(clients, config, configPath, { database = config.database && createDatabaseClients(config, clients.credential) } = {}) {
   const inventory = await readResources(config, configPath);

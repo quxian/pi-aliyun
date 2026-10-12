@@ -2,7 +2,6 @@ import CredentialModule from '@alicloud/credentials';
 import FCModule, * as FC from '@alicloud/fc20230330';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
-import CASModule from '@alicloud/cas20200407';
 import OSS from 'ali-oss';
 import { contentType } from 'mime-types';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,7 +16,10 @@ export async function createClients(config, { services = ['dns', 'fc', 'oss'] } 
   catch { throw new Error('Could not verify Alibaba Cloud credentials with STS GetCallerIdentity; check the SDK credential chain and network'); }
   if (identity.body?.accountId !== config.accountId) throw new Error('Credential account does not match config.accountId; no resources were changed');
   const clients = { credential };
-  if (services.includes('cas')) clients.cas = new (Client(CASModule))({ credential, endpoint: 'cas.aliyuncs.com', protocol: 'https' });
+  if (services.includes('cas')) {
+    const { default: CASModule } = await import('@alicloud/cas20200407');
+    clients.cas = new (Client(CASModule))({ credential, endpoint: 'cas.aliyuncs.com', protocol: 'https' });
+  }
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
   // Uploading and processing a dependency ZIP can outlast the SDK's short default timeout.
   if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https', connectTimeout: 30000, readTimeout: 120000 });

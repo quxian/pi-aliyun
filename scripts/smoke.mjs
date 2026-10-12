@@ -63,6 +63,10 @@ try {
   const archiveAgain = await createArchive(await collectFiles(config.backend.codeDir));
   assert(artifacts.backendArchive.equals(archiveAgain));
   assert.equal(archiveAgain.readUInt32LE(0), 0x04034b50);
+  const secret = join(config.backend.codeDir, 'tls-material.txt');
+  await writeFile(secret, 'must-not-enter-the-archive');
+  await assert.rejects(buildArtifacts({ ...config, tls: { ...config.tls, keyFile: secret } }), /TLS material/);
+  await rm(secret);
   await symlink(join(temp, 'server/server.mjs'), join(temp, 'static/leak'));
   await assert.rejects(collectFiles(config.frontend.dir), /symlink/);
   await rm(join(temp, 'static/leak'));

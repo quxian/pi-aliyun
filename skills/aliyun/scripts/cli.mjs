@@ -14,10 +14,16 @@ async function main() {
     return;
   }
   const accountCommands = { account: ['profile'], policy: ['profile'], init: ['profile', 'project', 'config'] };
-  const allowed = accountCommands[command] || (['schedule', 'renew-all', 'install-renewal'].includes(command)
-    ? { schedule: ['config', 'registry'], 'renew-all': ['registry'], 'install-renewal': ['user', 'registry'] }[command]
-    : command === 'destroy' ? ['config', 'confirm'] : ['config']);
-  if (!accountCommands[command] && !['doctor', 'plan', 'build', 'deploy', 'status', 'diagnose', 'verify', 'destroy', 'renew', 'schedule', 'renew-all', 'install-renewal', 'db-plan', 'db-inspect', 'db-setup'].includes(command)) throw new Error('Unknown command; use --help');
+  const commands = {
+    ...accountCommands,
+    doctor: ['config'], plan: ['config'], build: ['config'], deploy: ['config'],
+    status: ['config'], diagnose: ['config'], verify: ['config'], renew: ['config'],
+    'db-plan': ['config'], 'db-inspect': ['config'], 'db-setup': ['config'],
+    destroy: ['config', 'confirm'], schedule: ['config', 'registry'],
+    'renew-all': ['registry'], 'install-renewal': ['user', 'registry'],
+  };
+  if (!Object.hasOwn(commands, command)) throw new Error('Unknown command; use --help');
+  const allowed = commands[command];
   const options = {};
   for (let i = 0; i < args.length; i += 2) {
     const name = args[i].slice(2);
@@ -65,6 +71,13 @@ async function main() {
     console.log(JSON.stringify(report, null, 2));
     if (!report.ok) process.exitCode = 1;
     return;
+  }
+  let artifacts;
+  if (command === 'build' || command === 'deploy') {
+    const { buildArtifacts } = await import('./artifacts.mjs');
+    artifacts = await buildArtifacts(config);
+    console.log(`Local artifacts ready: ${artifacts.frontendFiles?.length || 0} frontend files; ${artifacts.backendArchive?.length || 0} backend ZIP bytes.`);
+    if (command === 'build') return;
   }
   const { createClients, ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBackendDomain } = await import('./cloud.mjs');
   if (['status', 'diagnose', 'destroy'].includes(command)) {
@@ -114,10 +127,6 @@ async function main() {
     console.log('TLS checked and uploaded to configured OSS/FC domains. No application build or deployment was run.');
     return;
   }
-  const { buildArtifacts } = await import('./artifacts.mjs');
-  const artifacts = await buildArtifacts(config);
-  console.log(`Local artifacts ready: ${artifacts.frontendFiles?.length || 0} frontend files; ${artifacts.backendArchive?.length || 0} backend ZIP bytes.`);
-  if (command === 'build') return;
   const clients = await createClients(config);
   await saveResources(config, path, { state: 'deploying' });
   if (config.database) {

@@ -5,7 +5,7 @@ export { verifyDatabaseRole, bootstrapDatabaseRole } from './database-role.mjs';
 import TableStore from 'tablestore';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { databaseAccess, databaseEnvironment, databaseNames } from './database-plan.mjs';
+import { databaseEnvironment, databaseNames } from './database-plan.mjs';
 import { createTablestoreClient } from '../assets/tablestore-runtime.mjs';
 
 const Client = (module) => module.default || module;
@@ -25,21 +25,23 @@ export function createDatabaseClients(config, credential) {
   };
 }
 
-async function instanceInfo(control, config) {
+export async function getInstance(control, name) {
   let nextToken;
   do {
-    const response = await control.listInstances(new OTS.ListInstancesRequest({ instanceName: config.database.instance, maxResults: 100, nextToken }));
-    if (response.body?.instances?.some((item) => item.instanceName === config.database.instance)) {
-      const { body } = await control.getInstance(new OTS.GetInstanceRequest({ instanceName: config.database.instance }));
-      if (body?.userId !== config.accountId || body.regionId !== config.region) throw new Error('Tablestore account or region mismatch');
-      if (body.instanceDescription !== databaseNames(config).instanceDescription) throw new Error('Existing Tablestore instance belongs to a different application; choose an owned instance or explicitly declare sharing');
-      if (body.instanceSpecification !== config.database.clusterType || body.paymentType !== 'PayAsYouGo' || Number(body.VCUQuota || 0) > 0) throw new Error('Tablestore instance is not the approved CU billing/type configuration');
-      if (body.instanceStatus !== 'normal') throw new Error('Tablestore instance is not available; check its status before retrying');
-      return body;
-    }
-    nextToken = response.body?.nextToken;
+    const { body } = await control.listInstances(new OTS.ListInstancesRequest({ instanceName: name, maxResults: 100, nextToken }));
+    if (body.instances?.some(item => item.instanceName === name)) return (await control.getInstance(new OTS.GetInstanceRequest({ instanceName: name }))).body;
+    nextToken = body.nextToken;
   } while (nextToken);
-  return undefined;
+}
+
+async function instanceInfo(control, config) {
+  const body = await getInstance(control, config.database.instance);
+  if (!body) return;
+  if (body.userId !== config.accountId || body.regionId !== config.region) throw new Error('Tablestore account or region mismatch');
+  if (body.instanceDescription !== databaseNames(config).instanceDescription) throw new Error('Existing Tablestore instance belongs to a different application; choose an owned instance or explicitly declare sharing');
+  if (body.instanceSpecification !== config.database.clusterType || body.paymentType !== 'PayAsYouGo' || Number(body.VCUQuota || 0) > 0) throw new Error('Tablestore instance is not the approved CU billing/type configuration');
+  if (body.instanceStatus !== 'normal') throw new Error('Tablestore instance is not available; check its status before retrying');
+  return body;
 }
 
 export function createTableInput(config, table) {

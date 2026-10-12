@@ -58,6 +58,10 @@ async function issueCertificate(config, domains, existingKey) {
     directoryUrl: settings.directoryUrl ?? acme.directory.letsencrypt.production,
     accountKey,
   })
+  // Some deployment hosts need a proxy for external CAs; keep Alibaba SDK traffic separate.
+  const proxy = settings.proxyUrl ? new URL(settings.proxyUrl) : undefined
+  acme.axios.defaults.proxy = proxy ? { protocol: proxy.protocol.slice(0, -1), host: proxy.hostname, port: Number(proxy.port || (proxy.protocol === 'https:' ? 443 : 80)) } : undefined
+  acme.axios.defaults.timeout = 30_000
   // Reuse the certificate key so an interrupted certificate replacement cannot leave a mismatched pair.
   const [privateKey, csr] = await acme.crypto.createCsr({ commonName: domains[0], altNames: domains }, existingKey)
   if (!existingKey) await writePrivate(config.tls.keyFile, privateKey)
@@ -70,6 +74,7 @@ async function issueCertificate(config, domains, existingKey) {
     created.delete(challengeUrl)
   }
   try {
+    console.log(`Requesting ACME certificate for: ${domains.join(', ')}`)
     const certificate = await client.auto({
       csr,
       email: settings.email,
@@ -92,6 +97,7 @@ async function issueCertificate(config, domains, existingKey) {
     })
     if (!validateCertificate(certificate, privateKey, domains)) throw new Error('ACME 返回了过期证书。')
     await writePrivate(config.tls.certFile, certificate)
+    console.log(`ACME certificate saved; expires ${new X509Certificate(certificate).validTo}`)
     return { certificate, privateKey: uploadPrivateKey(privateKey) }
   } finally {
     // Delete only record IDs created by this invocation; unrelated TXT records must survive.

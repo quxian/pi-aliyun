@@ -173,6 +173,8 @@ try {
   assert.throws(() => deploymentPolicy({ ...policyConfig, frontend: { bucket: 'unrelated' } }), /requires/);
 
   raw.tls.acme = { email: 'smoke@example.com', accountKeyFile: '.aliyun/tls/account-key.pem', agreeToTerms: true };
+  assert.throws(() => validateConfig({ ...raw, tls: { ...raw.tls, acme: { ...raw.tls.acme, proxyUrl: 'http://user:secret@localhost:7890' } } }, temp), /without credentials/);
+  assert.equal(validateConfig({ ...raw, tls: { ...raw.tls, acme: { ...raw.tls.acme, proxyUrl: 'http://127.0.0.1:7890' } } }, temp).tls.acme.proxyUrl, 'http://127.0.0.1:7890');
   const registry = join(temp, 'renewal/registry.json');
   const otherConfig = join(temp, 'other.json');
   await writeFile(join(temp, 'aliyun.json'), JSON.stringify(raw));

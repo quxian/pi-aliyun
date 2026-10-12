@@ -100,10 +100,15 @@ export function validateConfig(raw, baseDir) {
   }
   if (config.tls.acme) {
     const a = config.tls.acme;
-    keys(a, ['email', 'directoryUrl', 'accountKeyFile', 'renewBeforeDays', 'agreeToTerms'], 'tls.acme');
+    keys(a, ['email', 'directoryUrl', 'accountKeyFile', 'renewBeforeDays', 'agreeToTerms', 'proxyUrl'], 'tls.acme');
     string(a.email, 'tls.acme.email'); string(a.accountKeyFile, 'tls.acme.accountKeyFile');
     a.accountKeyFile = resolve(baseDir, a.accountKeyFile);
     if (a.directoryUrl && !a.directoryUrl.startsWith('https://')) fail('ACME directoryUrl must use HTTPS');
+    if (a.proxyUrl !== undefined) {
+      let proxy;
+      try { proxy = new URL(a.proxyUrl); } catch { fail('ACME proxyUrl must be a valid HTTP(S) proxy origin'); }
+      if (!['http:', 'https:'].includes(proxy.protocol) || proxy.username || proxy.password || proxy.pathname !== '/' || proxy.search || proxy.hash) fail('ACME proxyUrl must be an HTTP(S) proxy origin without credentials or a path');
+    }
     a.renewBeforeDays ??= 30;
     integer(a.renewBeforeDays, 1, 60, 'tls.acme.renewBeforeDays');
     if (a.agreeToTerms !== undefined && typeof a.agreeToTerms !== 'boolean') fail('tls.acme.agreeToTerms must be boolean');

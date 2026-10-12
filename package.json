@@ -1,6 +1,6 @@
 {
   "name": "pi-aliyun",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Alibaba Cloud OSS and Function Compute deployment skill for Pi",
   "type": "module",
   "license": "MIT",

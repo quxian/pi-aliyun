@@ -15,9 +15,9 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory dist/frontend
 
 ## 部署到阿里云
 
-把此目录复制到一个持久的项目目录，不要在能力包安装缓存内保存项目、证书或账号配置。将 `aliyun.example.json` 复制为 `aliyun.json`，填写账号、地域、专用桶名、两个子域名及 DNS 区域；大陆地域的域名需已备案。
+把此目录复制到一个持久的项目目录，不要在能力包安装缓存内保存项目、证书或账号配置。使用 `init --project pi-aliyun-<name> --config /项目路径/aliyun.json` 继承账号配置，再参考 `aliyun.example.json` 填写本示例的构建命令和产物路径；大陆地域的域名需已备案。
 
-配置部署身份，详见[包的凭据说明](../../README.md#凭据和权限)。填写自己的证书联系邮箱，阅读并同意所选 CA 的协议后设置 `tls.acme.agreeToTerms: true`；已有证书也可删除 `acme` 配置并提供 PEM 文件。
+配置部署身份，详见[包的凭据说明](../../README.md#配置账号)。填写自己的证书联系邮箱，阅读并同意所选 CA 的协议后设置 `tls.acme.agreeToTerms: true`；已有证书也可删除 `acme` 配置并提供 PEM 文件。
 
 在项目目录用已安装能力包的 CLI 执行：
 

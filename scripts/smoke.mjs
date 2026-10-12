@@ -27,8 +27,7 @@ try {
   assert.equal(uploadPrivateKey(cloudKey), cloudKey);
   const cli = join(root, 'skills/aliyun/scripts/cli.mjs');
   const run = (command) => execFileSync(process.execPath, [cli, command], { cwd: temp, encoding: 'utf8', env: { ...process.env, ALIBABA_CLOUD_ACCESS_KEY_ID: 'smoke-do-not-use', ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'smoke-secret-do-not-print', ALIBABA_CLOUD_CREDENTIALS_URI: 'https://invalid.invalid' } });
-  run('init');
-  const raw = JSON.parse(await readFile(join(temp, 'aliyun.json'), 'utf8'));
+  const raw = JSON.parse(await readFile(join(root, 'skills/aliyun/assets/aliyun.example.json'), 'utf8'));
   delete raw.frontend.build; delete raw.backend.build;
   raw.frontend.dir = 'static'; raw.backend.codeDir = 'server';
   raw.backend.envFrom = { DATABASE_URL: 'PI_ALIYUN_SMOKE_DATABASE' };
@@ -86,7 +85,7 @@ try {
     getFunction: async () => { if (!functionExists) throw missing('FunctionNotFound'); return { body: { description: input.description } }; },
     createFunction: async (value) => { value.validate(); functionExists = true; calls.push('createFunction'); },
     updateFunction: async (_name, value) => { value.validate(); calls.push('updateFunction'); },
-    putConcurrencyConfig: async (_name, value) => { assert.equal(value.body.reservedConcurrency, 5); },
+    putConcurrencyConfig: async (_name, value) => { assert.equal(value.body.reservedConcurrency, 1); },
     putScalingConfig: async (_name, value) => { assert.equal(value.body.minInstances, 0); },
     getTrigger: async () => { if (!triggerExists) throw missing('TriggerNotFound'); },
     createTrigger: async (_name, value) => { triggerExists = true; assert.equal(JSON.parse(value.body.triggerConfig).disableURLInternet, true); calls.push('createTrigger'); },
@@ -134,6 +133,7 @@ try {
     putBucketACL: async (_name, acl) => { assert.equal(blockPublicAccess, false); assert.equal(acl, 'public-read'); },
     request: async (value) => {
       assert([200].includes(value.successStatuses[0]));
+      if (value.method === 'GET' && value.subres === 'cname') return { data: {} };
       if (value.subres === 'publicAccessBlock') {
         assert.equal(value.bucket, config.frontend.bucket);
         assert.match(value.content, /<BlockPublicAccess>false<\/BlockPublicAccess>/);
@@ -160,6 +160,7 @@ try {
   const verificationOss = {
     getBucketTags: async () => ({ tag: { 'pi-aliyun-project': config.project } }),
     request: async ({ subres }) => {
+      if (subres === 'cname') return { data: {} };
       if (subres.comp === 'token') return { data: { Bucket: config.frontend.bucket, Cname: config.frontend.domain, Token: 'verification-only' } };
       verifyAttempts++;
       if (verifyAttempts <= 2) throw missing('NeedVerifyDomainOwnership');
@@ -170,6 +171,7 @@ try {
   assert.equal(verifyAttempts, 3);
   assert.deepEqual(verificationRecords.map((record) => record.recordId), ['unrelated']);
   const neverVerified = { ...verificationOss, request: async (value) => {
+    if (value.subres === 'cname') return { data: {} };
     if (value.subres.comp === 'token') return verificationOss.request(value);
     throw missing('NeedVerifyDomainOwnership');
   } };

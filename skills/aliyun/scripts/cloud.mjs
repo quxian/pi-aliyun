@@ -2,9 +2,11 @@ import CredentialModule from '@alicloud/credentials';
 import FCModule, * as FC from '@alicloud/fc20230330';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
+import CASModule from '@alicloud/cas20200407';
 import OSS from 'ali-oss';
 import { contentType } from 'mime-types';
 import { setTimeout as delay } from 'node:timers/promises';
+import { X509Certificate } from 'node:crypto';
 
 const Client = (module) => module.default || module;
 export async function createClients(config, { services = ['dns', 'fc', 'oss'] } = {}) {
@@ -15,6 +17,7 @@ export async function createClients(config, { services = ['dns', 'fc', 'oss'] } 
   catch { throw new Error('Could not verify Alibaba Cloud credentials with STS GetCallerIdentity; check the SDK credential chain and network'); }
   if (identity.body?.accountId !== config.accountId) throw new Error('Credential account does not match config.accountId; no resources were changed');
   const clients = { credential };
+  if (services.includes('cas')) clients.cas = new (Client(CASModule))({ credential, endpoint: 'cas.aliyuncs.com', protocol: 'https' });
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
   // Uploading and processing a dependency ZIP can outlast the SDK's short default timeout.
   if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https', connectTimeout: 30000, readTimeout: 120000 });
@@ -35,7 +38,7 @@ export function isMissing(error) {
   return ['FunctionNotFound', 'TriggerNotFound', 'DomainNameNotFound', 'CustomDomainNotFound', 'NoSuchBucket'].includes(error.code);
 }
 
-async function domainRecords(dns, config, RR) {
+export async function domainRecords(dns, config, RR) {
   const records = [];
   for (let pageNumber = 1; ; pageNumber++) {
     const response = await dns.describeDomainRecords(new DNS.DescribeDomainRecordsRequest({ domainName: config.dns.zone, RRKeyWord: RR, searchMode: 'EXACT', pageNumber, pageSize: 500 }));
@@ -101,6 +104,11 @@ export async function deployFrontend(oss, config, files, tls, options = {}) {
 export async function bindFrontendDomain(oss, config, tls, { dns, attempts = 25, wait = () => delay(5000) } = {}) {
   const tags = await oss.getBucketTags(config.frontend.bucket);
   if (tags.tag['pi-aliyun-project'] !== config.project) throw new Error('OSS bucket is not managed by this project');
+  const listed = await oss.request({ method: 'GET', bucket: config.frontend.bucket, subres: 'cname', xmlResponse: true, successStatuses: [200] });
+  const entries = Array.isArray(listed.data?.Cname) ? listed.data.Cname : listed.data?.Cname ? [listed.data.Cname] : [];
+  const current = entries.find(item => item.Domain === config.frontend.domain);
+  // Avoid creating a duplicate uploaded certificate on every deploy/daily check.
+  if (current?.Certificate?.Status === 'Enabled' && current.Certificate.Fingerprint?.toUpperCase() === new X509Certificate(tls.certificate).fingerprint) return;
   // PutCname is an official OSS API not exposed by ali-oss's convenience helpers.
   const bind = () => oss.request({ method: 'POST', bucket: config.frontend.bucket, subres: { cname: '', comp: 'add' }, content: certificateXml(config.frontend.domain, tls), mime: 'xml', successStatuses: [200] });
   try { await bind(); return; }
@@ -193,14 +201,18 @@ export async function bindBackendDomain(fc, config, tls, { existingOnly = false,
     ...(corsConfig(config) ? { corsConfig: corsConfig(config) } : {}),
   };
   let exists;
+  let sameCertificate = false;
   try {
     const current = await fc.getCustomDomain(b.domain);
     const routes = current.body?.routeConfig?.routes || [];
     if (routes.length !== 1 || routes[0].functionName !== b.functionName || routes[0].path !== '/*') throw new Error('Existing FC domain is not exclusively routed to this project function');
+    sameCertificate = Boolean(current.body?.certConfig?.certificate && new X509Certificate(current.body.certConfig.certificate).fingerprint256 === new X509Certificate(tls.certificate).fingerprint256);
     exists = true;
   }
   catch (error) { if (existingOnly || !isMissing(error)) throw error; exists = false; }
   const { domainName, ...updates } = values;
+  if (existingOnly && sameCertificate) return;
+  if (sameCertificate) delete updates.certConfig;
   const bind = exists
     ? () => fc.updateCustomDomain(domainName, new FC.UpdateCustomDomainRequest({ body: new FC.UpdateCustomDomainInput(existingOnly ? { certConfig: updates.certConfig } : updates) }))
     : () => fc.createCustomDomain(new FC.CreateCustomDomainRequest({ body: new FC.CreateCustomDomainInput(values) }));

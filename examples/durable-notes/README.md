@@ -2,7 +2,7 @@
 
 验证 OSS、FC 和 Tablestore 持久化。页面输入共享访问口令后可读写一条便笺；这是部署示例，不是多用户登录系统。仅保存验证文字，真实应用实现自己的身份与授权。
 
-1. 将本目录复制到包安装目录外，复制 `aliyun.example.json` 为 `aliyun.json`，调整账号、资源名、域名和 TLS/ACME 配置。默认创建本应用自己的数据库实例；不要填入其它应用的实例地址。
+1. 将本目录复制到包安装目录外，用 `init --project pi-aliyun-<name> --config /项目路径/aliyun.json` 继承账号配置，再参考 `aliyun.example.json` 设置本示例的构建、产物、`envFrom` 和 `database`。默认创建本应用自己的数据库实例；不要填入其它应用的实例地址。
 2. 将包内 `skills/aliyun/assets/tablestore-runtime.mjs` 复制到项目 `backend/tablestore-runtime.mjs`。应用运行时只依赖自己的 `tablestore`，不依赖包安装路径。
 3. 生成随机口令，放入部署进程 `PI_NOTES_TOKEN`；不要打印口令、写入前端或提交 Git。后端通过 `envFrom` 使用它。保留在部署主机的私有环境文件（0600），再次发布时加载。
 4. 执行 `doctor`、`build`、`db-plan`、`db-inspect`。核对数据库估算、实例、项目表、独立 FC 角色和网站资源是否在已有授权范围内；只有真正新增费用或权限时才合并确认。部署凭据会直接创建和维护应用运行角色，按[数据库流程](../../skills/aliyun/references/database.md)继续，无需逐项目保存审批文件。

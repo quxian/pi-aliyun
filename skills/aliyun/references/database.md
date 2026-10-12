@@ -11,6 +11,12 @@
 
 Tablestore 的 SQL 查询入口不等同于 MySQL 协议或关系型事务。其局部事务限于同一分区键；本包示例使用单行读写。个人收支记录和需要一致转账的账户系统并非同一种数据需求。[官方能力](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/what-is-tablestore)、[实例类型与限制](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/basic-concepts)。
 
+## 先理解业务，再选产品
+
+选型由 Agent 根据实际业务判断，不根据“账本”等应用名称套模板。先明确数据访问方式、事务范围、已有技术栈与预计用量，再给出最低成本的可行选择。没有持久化需求就省略 `database`；不要先建库再找用途。已有应用使用 SQL/ORM 时，优先保留其语义，不为了套用当前 CLI 改成 Tablestore。
+
+`db-plan` 是所选 Tablestore 配置的费用和资源清单，不是自动理解业务的选型器。需要关系型数据库时，先核实阿里云当前可售方案、独立实例最低费用、网络连接方式和完整权限增量，合并提交一次确认。未确认前完成可完成的代码与配置；不要购买、声称已部署，或把数据库强行改为共享。当前 CLI 不自动购买关系型数据库；该路径需要按真实项目落实相应产品的创建和 Schema 操作，不能伪装成已经覆盖的能力。
+
 ## 费用
 
 Tablestore 使用 CU 按量计费，预留读写为 0，不默认启用索引、复制、VCU、NAT 或额外备份服务。CU 实例没有额外实例购买费，按存储、实际读写和流量计费，因此小应用不必为了节省固定实例月租而共享实例。

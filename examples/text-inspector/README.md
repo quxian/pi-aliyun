@@ -2,7 +2,7 @@
 
 一个独立的前后端分离项目：前端输入文本，后端返回字符数、去空白字符数、行数和 UTF-8 字节数，不保存文本，也不依赖数据库或第三方运行时包。字符使用 `Intl.Segmenter` 按字形统计。
 
-复制此目录到包安装目录以外的持久项目目录。将 `aliyun.example.json` 复制为 `aliyun.json`，填写账号、专用 Bucket、函数名、两个子域名、DNS 区域和证书邮箱。证书协议及凭据按[包说明](../../README.md)配置。
+复制此目录到包安装目录以外的持久项目目录。用 `init --project pi-aliyun-<name> --config /项目路径/aliyun.json` 继承账号配置，再参考 `aliyun.example.json` 设置本示例的构建命令与产物路径。证书协议及凭据按[包说明](../../README.md)配置。
 
 ```sh
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy --config aliyun.json

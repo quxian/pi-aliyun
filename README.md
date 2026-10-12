@@ -27,11 +27,12 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
   "region": "cn-beijing",
   "zone": "example.com",
   "projectRoot": "/srv/projects",
-  "acmeEmail": "operator@example.com"
+  "acmeEmail": "operator@example.com",
+  "acmeTermsAccepted": true
 }
 ```
 
-`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
+`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。`acmeTermsAccepted` 只在用户已同意所选 CA 条款后设置，新应用继承这一同意。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
 
 凭据由官方 [credentials SDK](https://github.com/aliyun/credentials-nodejs) 读取：推荐为部署主机配置 RAM 角色，也可使用 SDK 凭据文件或环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，临时凭据再加 `ALIBABA_CLOUD_SECURITY_TOKEN`。SDK 默认凭据文件是该服务用户的 `~/.alibabacloud/credentials`，可用 `ALIBABA_CLOUD_CREDENTIALS_FILE` 指定其它路径；文件应只允许该用户读取。凭据属于**执行部署的主机和服务用户**，不是浏览器，也不写入上述 JSON。
 
@@ -40,7 +41,7 @@ pi-aliyun account
 pi-aliyun policy --profile /path/to/account.json > deployment-policy.json
 ```
 
-管理员将生成的完整策略授予选定的部署身份一次，开通所用云服务。策略覆盖约定账号、地域和域名下的网站资源、数据库实例和表，以及应用运行角色的创建、策略维护和向 FC 传递角色。后续 `deploy` 直接完成这些操作，无需逐个应用手工配置 RAM。
+管理员将生成的完整策略授予部署身份一次，开通所用云服务。策略包含创建、查看、更新和删除应用资源，以及运行角色管理。证书列表、部署关系和删除接口要求账号级权限；程序只清理本应用域名和已记录指纹匹配的上传证书。同范围应用无需逐个手工配置 RAM；包更新需要新增权限时，先展示完整增量，经用户确认后更新这份正式策略。
 
 **部署身份是受信任的管理身份。** 它能创建和修改 RAM 策略；角色和策略名称前缀不能约束策略正文，也不能作为防提权边界。仅将此身份交给受信任的部署环境；同一身份下的 Agent 或能取得实例凭据的进程不相互隔离。应用运行角色与它分开，只访问自己的业务数据，部署凭据绝不注入应用。
 
@@ -49,7 +50,7 @@ pi-aliyun policy --profile /path/to/account.json > deployment-policy.json
 ## 开发和部署
 
 ```sh
-pi-aliyun project-init --project pi-aliyun-myapp
+pi-aliyun init --project pi-aliyun-myapp
 cd /srv/projects/pi-aliyun-myapp
 # 开发前后端，完善 aliyun.json
 pi-aliyun doctor
@@ -57,7 +58,7 @@ pi-aliyun plan
 pi-aliyun deploy
 ```
 
-`project-init` 创建独立项目目录与配置，不生成业务代码。部署时自动构建、核对账号、创建或检查资源、配置运行角色和数据库连接、发布代码并绑定 HTTPS。每个项目的 `aliyun.json` 使用相对于自身的文件路径；命令可通过 `--config /path/to/aliyun.json` 指向它。
+`init` 是唯一初始化入口，继承账号、地域、域名、低规格默认值和 CA 同意，不生成业务代码。已有项目使用 `init --project pi-aliyun-myapp --config /path/to/project/aliyun.json`；不会覆盖已有配置，已有 `.gitignore` 会保留。每个项目的 `aliyun.json` 使用相对于自身的路径；其它命令通过 `--config` 指向它。
 
 | 配置 | 用途 |
 | --- | --- |
@@ -67,15 +68,35 @@ pi-aliyun deploy
 | `backend.codeDir`、`backend.build` | 包含全部生产依赖的后端产物和构建命令 |
 | `backend.runtime`、`command`、`port` | FC 运行时、启动命令和监听端口 |
 | `backend.cpu`、`memorySize`、`maxInstances` | 按业务和已批准费用范围选择的规格 |
+| `backend.healthPath` | 默认 `/health`，无业务鉴权的只读健康接口，正常时返回 2xx，不暴露秘密或业务数据 |
 | `backend.environment`、`envFrom` | 非敏感固定变量，以及函数变量到部署进程秘密变量的映射 |
 | `database` | 应用独立数据库、表结构和用量估算，见[数据库说明](skills/aliyun/references/database.md) |
 | `dns`、`tls` | AliDNS 区域、证书或 ACME 签发配置 |
 
 不需要的一端可删除整个配置。前端必须是静态文件或框架的静态导出；后端保留普通 HTTP 服务形态，监听 `0.0.0.0` 和 `PORT`，无需每条路由拆成一个函数。后端及依赖须适配 FC Linux x86_64，不能直接上传本机原生模块；ZIP 上限 60 MiB。参考[无数据库示例](examples/hello-cloud/README.md)和[持久化示例](examples/durable-notes/README.md)。
 
-`doctor` 检查本地配置；`plan` 展示目标资源，不查询实时差异；`build` 只构建；`db-plan` 估算数据库费用；`db-inspect` 只读检查数据库和角色；`db-setup` 单独执行部署已包含的数据库准备。正常主流程只需 `deploy`，完成后检查 HTTPS、真实 API；使用数据库时再验证一次读写及重发版后数据保留。
+`deploy` 自动构建、核对账号、准备资源和运行权限、发布代码、配置 DNS/HTTPS，再检查前端 HTTPS 与后端健康接口。非 2xx、证书或连接失败均返回失败，不会把上传成功等同于上线成功。最后由 Agent 验收真实业务；有持久化时验证鉴权读写与重新发布后数据保留。普通更新只验证受影响流程。
+
+`doctor` 检查本地配置；`plan` 展示目标资源，不查询实时差异；`build` 只构建；`db-plan` 估算选定数据库的费用；`db-inspect` 只读检查数据库和角色；`db-setup` 单独执行部署已包含的数据库准备。
 
 部署会保存不含秘密的 `.aliyun/resources.json`。重复发布复用本应用资源，归属冲突会停止；不会接管其它应用或删除数据库。共享必须明确声明，详见[数据库说明](skills/aliyun/references/database.md)。
+
+## 查看、排障与删除
+
+```sh
+pi-aliyun status --config /srv/projects/pi-aliyun-myapp/aliyun.json
+pi-aliyun diagnose --config /srv/projects/pi-aliyun-myapp/aliyun.json
+pi-aliyun verify --config /srv/projects/pi-aliyun-myapp/aliyun.json
+pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json
+# 用户明确要求删除该应用及数据后执行
+pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json --confirm pi-aliyun-myapp
+```
+
+`status` 读取真实资源、DNS、数据库和证书状态；`diagnose` 加上本地检查和 HTTPS 检查，输出错误码、请求 ID 与排查方向，不输出业务响应正文、环境秘密或证书私钥。它不自动购买日志服务，也不修改应用。`verify` 可单独重新验收网络与健康接口。
+
+不带 `--confirm` 的 `destroy` 只预览。确认执行后删除本应用 DNS、FC 域名和函数、OSS 对象及 Bucket、独立数据库、运行角色和策略、已记录的上传证书，并移除续期登记。数据库异步释放会等待并复核；失败时保留清单，修正原因后用同一命令继续。删除会永久清除云端数据，不自动备份。源码、配置和本地私有文件保留，由用户另行决定是否删除。
+
+共享数据库在使用方删除时保留；所有者仍被其它应用权限策略引用时拒绝删除。额外域名或触发器、版本化 Bucket、自定义 VPC 等超出工具创建范围的资源，会在删除前报告需要单独处理。未知证书指纹或含其它域名的证书保留并列明。资源清单在部署过程中保存，包括证书指纹；不要先删除项目目录再要求工具清理云资源。
 
 ## 域名和 HTTPS
 
@@ -109,7 +130,7 @@ sudo systemctl start pi-aliyun-renew.service
 systemctl list-timers pi-aliyun-renew.timer
 ```
 
-每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。包升级保持安装路径；换路径后重新安装定时器。停用项目时从清单删除对应配置路径。
+每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。包升级保持安装路径；换路径后重新安装定时器。`destroy` 会移除该应用的续期登记。
 
 ## 运行边界
 

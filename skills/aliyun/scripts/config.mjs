@@ -57,14 +57,16 @@ export function validateConfig(raw, baseDir) {
   }
   if (config.backend) {
     const b = config.backend;
-    keys(b, ['functionName', 'codeDir', 'build', 'domain', 'runtime', 'command', 'port', 'cpu', 'memorySize', 'timeout', 'instanceConcurrency', 'maxInstances', 'environment', 'envFrom', 'role', 'vpcConfig'], 'backend');
+    keys(b, ['functionName', 'codeDir', 'build', 'domain', 'runtime', 'command', 'port', 'cpu', 'memorySize', 'timeout', 'instanceConcurrency', 'maxInstances', 'environment', 'envFrom', 'role', 'vpcConfig', 'healthPath'], 'backend');
     if (!/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(b.functionName || '')) fail('backend.functionName is invalid');
     string(b.codeDir, 'backend.codeDir');
     b.codeDir = resolve(baseDir, b.codeDir);
     b.runtime ??= 'custom.debian10';
     if (!['custom.debian12', 'custom.debian11', 'custom.debian10', 'custom'].includes(b.runtime)) fail('backend.runtime must be a supported FC custom runtime');
     command(b.command, 'backend.command');
-    b.port ??= 9000; b.cpu ??= 0.35; b.memorySize ??= 512; b.timeout ??= 60; b.instanceConcurrency ??= 10; b.maxInstances ??= 5;
+    b.port ??= 9000; b.cpu ??= 0.1; b.memorySize ??= 256; b.timeout ??= 30; b.instanceConcurrency ??= 5; b.maxInstances ??= 1;
+    b.healthPath ??= '/health';
+    if (typeof b.healthPath !== 'string' || !/^\/(?!\/)[A-Za-z0-9/_~.-]*$/.test(b.healthPath)) fail('backend.healthPath must be a public read-only health route without query parameters');
     integer(b.port, 1, 65535, 'backend.port');
     integer(b.memorySize, 128, 32768, 'backend.memorySize');
     if (b.memorySize % 64 !== 0) fail('backend.memorySize must be a multiple of 64 MiB');

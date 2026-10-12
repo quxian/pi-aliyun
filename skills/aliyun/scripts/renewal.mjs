@@ -31,6 +31,15 @@ export async function registerRenewal(configPath, registryPath = defaultRegistry
   console.log(`Registered certificate renewal: ${path}`);
 }
 
+export async function unregisterRenewal(configPath, registryPath = defaultRegistry()) {
+  const registry = await readRegistry(registryPath, true);
+  registry.projects = registry.projects.filter(path => path !== resolve(configPath));
+  await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
+  const temporary = `${registryPath}.${process.pid}.tmp`;
+  await writeFile(temporary, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
+  await rename(temporary, registryPath);
+}
+
 async function runRenewal(configPath) {
   try {
     const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { timeout: 600_000, maxBuffer: 1024 * 1024 });

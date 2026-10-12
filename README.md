@@ -20,6 +20,8 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 
 在「Agent 页面 → 能力包」填入 `https://github.com/quxian/pi-aliyun.git`，也支持已配置 Git 认证的私有仓库地址，如 `git@gitee.com:owner/pi-aliyun.git`。Client Pi 提供安装入口，本包独立于其源码和运行服务。
 
+已与 Agent 约定开发并上线、且完成账号配置后，可以直接描述应用需求；Agent 应沿用现有授权完成交付。继续开发已有应用时，提供或沿用它的项目位置，新对话和新功能不会自动创建另一套应用资源。用户明确要求只讨论或只做本地开发时，按该范围执行。
+
 ## 配置账号
 
 在部署服务用户的 `~/.config/pi-aliyun/account.json` 保存非敏感配置：
@@ -78,6 +80,10 @@ pi-aliyun deploy
 | `dns`、`tls` | AliDNS 区域、证书或 ACME 签发配置 |
 
 模板包含前后端配置，部署前省略不需要的整个 `frontend` 或 `backend`；没有持久化需求就不配置 `database`。接手已有代码时，先核对业务行为与部署形态的适配。前端须为静态文件或框架的静态导出；后端保留普通 HTTP 服务形态，监听 `0.0.0.0` 和 `PORT`。后端及依赖须适配 FC Linux x86_64，不能直接上传本机原生模块；ZIP 上限 60 MiB。参考[无数据库示例](examples/hello-cloud/README.md)和[持久化示例](examples/durable-notes/README.md)。
+
+前端 API 地址需在业务代码或构建配置中设为实际后端域名。前后端同时配置时，CLI 自动为 FC 触发器和自定义域名设置 CORS，允许配置中的 HTTPS 前端来源及 `Content-Type`、`Authorization` 请求头；应用避免重复写入冲突的 CORS 响应头，其它来源或自定义请求头需单独适配并验证。CORS 不代替业务鉴权。模板的目录、构建命令和运行时也需匹配实际项目。
+
+`envFrom` 只读取部署进程的环境变量，不自动加载 `.env`。业务秘密应持久保存在产物目录外、已忽略的私有文件中（权限 0600），每次部署时加载，例如 `node --env-file=/path/to/private.env /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy --config /path/to/project/aliyun.json`。普通更新复用既有秘密，不把变量缺失误当成需要重置口令；前端只使用公开配置。
 
 `deploy` 自动构建、核对账号、准备资源和运行权限、发布代码、配置 DNS/HTTPS，再检查前端 HTTPS 与后端健康接口。非 2xx、证书或连接失败均返回失败，不会把上传成功等同于上线成功。最后由 Agent 验收真实业务；有持久化时验证鉴权读写与重新发布后数据保留。普通更新只验证受影响流程。
 

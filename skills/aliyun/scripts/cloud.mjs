@@ -183,7 +183,7 @@ export async function deployBackend(fc, config, archive, environment) {
   }
 }
 
-export async function bindBackendDomain(fc, config, tls, { existingOnly = false } = {}) {
+export async function bindBackendDomain(fc, config, tls, { existingOnly = false, attempts = 25, wait = () => delay(5000) } = {}) {
   const b = config.backend;
   const values = {
     domainName: b.domain, protocol: 'HTTPS', certConfig: { certName: `${config.project}-tls`, certificate: tls.certificate, privateKey: tls.privateKey },
@@ -198,8 +198,15 @@ export async function bindBackendDomain(fc, config, tls, { existingOnly = false 
     exists = true;
   }
   catch (error) { if (existingOnly || !isMissing(error)) throw error; exists = false; }
-  if (exists) {
-    const { domainName, ...updates } = values;
-    await fc.updateCustomDomain(domainName, new FC.UpdateCustomDomainRequest({ body: new FC.UpdateCustomDomainInput(existingOnly ? { certConfig: updates.certConfig } : updates) }));
-  } else await fc.createCustomDomain(new FC.CreateCustomDomainRequest({ body: new FC.CreateCustomDomainInput(values) }));
+  const { domainName, ...updates } = values;
+  const bind = exists
+    ? () => fc.updateCustomDomain(domainName, new FC.UpdateCustomDomainRequest({ body: new FC.UpdateCustomDomainInput(existingOnly ? { certConfig: updates.certConfig } : updates) }))
+    : () => fc.createCustomDomain(new FC.CreateCustomDomainRequest({ body: new FC.CreateCustomDomainInput(values) }));
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try { await bind(); return; }
+    catch (error) { if (error.code !== 'DomainNameNotResolved') throw error; }
+    if (attempt === 0) console.log(`Waiting for FC to recognize the CNAME: ${domainName}`);
+    if (attempt < attempts - 1) await wait();
+  }
+  throw new Error(`FC has not recognized the CNAME for ${domainName}; check DNS propagation and retry deployment`);
 }

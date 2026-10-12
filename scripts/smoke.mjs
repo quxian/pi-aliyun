@@ -71,6 +71,7 @@ try {
   let functionExists = false;
   let triggerExists = false;
   let domainExists = false;
+  let domainAttempts = 0;
   const fc = {
     getFunction: async () => { if (!functionExists) throw missing('FunctionNotFound'); return { body: { description: input.description } }; },
     createFunction: async (value) => { value.validate(); functionExists = true; calls.push('createFunction'); },
@@ -81,13 +82,14 @@ try {
     createTrigger: async (_name, value) => { triggerExists = true; assert.equal(JSON.parse(value.body.triggerConfig).disableURLInternet, true); calls.push('createTrigger'); },
     updateTrigger: async () => calls.push('updateTrigger'),
     getCustomDomain: async () => { if (!domainExists) throw missing('DomainNameNotFound'); return { body: { routeConfig: { routes: [{ functionName: config.backend.functionName, path: '/*' }] } } }; },
-    createCustomDomain: async (value) => { value.validate(); domainExists = true; calls.push('createDomain'); },
+    createCustomDomain: async (value) => { value.validate(); if (++domainAttempts === 1) throw missing('DomainNameNotResolved'); domainExists = true; calls.push('createDomain'); },
     updateCustomDomain: async (_name, value) => { value.validate(); calls.push('updateDomain'); },
   };
   const tls = { certificate: 'mock certificate', privateKey: 'mock private key' };
   await deployBackend(fc, config, artifacts.backendArchive, artifacts.environment);
   await deployBackend(fc, config, artifacts.backendArchive, artifacts.environment);
-  await bindBackendDomain(fc, config, tls);
+  await bindBackendDomain(fc, config, tls, { wait: async () => {} });
+  assert.equal(domainAttempts, 2);
   await bindBackendDomain(fc, config, tls, { existingOnly: true });
   assert.deepEqual(calls, ['createFunction', 'createTrigger', 'updateFunction', 'updateTrigger', 'createDomain', 'updateDomain']);
   await assert.rejects(deployBackend({ ...fc, getFunction: async () => ({ body: { description: 'another project' } }) }, config, archiveAgain, {}), /not managed/);

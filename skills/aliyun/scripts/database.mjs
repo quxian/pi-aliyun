@@ -1,6 +1,6 @@
 import TablestoreModule, * as OTS from '@alicloud/tablestore20201209';
 import RAMModule from '@alicloud/ram20150501';
-import { verifyDatabaseRole } from './database-role.mjs';
+import { verifyDatabaseRole, bootstrapDatabaseRole } from './database-role.mjs';
 export { verifyDatabaseRole, bootstrapDatabaseRole } from './database-role.mjs';
 import TableStore from 'tablestore';
 import { isDeepStrictEqual } from 'node:util';
@@ -32,7 +32,7 @@ async function instanceInfo(control, config) {
     if (response.body?.instances?.some((item) => item.instanceName === config.database.instance)) {
       const { body } = await control.getInstance(new OTS.GetInstanceRequest({ instanceName: config.database.instance }));
       if (body?.userId !== config.accountId || body.regionId !== config.region) throw new Error('Tablestore account or region mismatch');
-      if (body.instanceDescription !== databaseNames(config).instanceDescription) throw new Error('Existing Tablestore instance belongs to a different application or the legacy shared platform; declare the owner explicitly or migrate to a dedicated instance');
+      if (body.instanceDescription !== databaseNames(config).instanceDescription) throw new Error('Existing Tablestore instance belongs to a different application; choose an owned instance or explicitly declare sharing');
       if (body.instanceSpecification !== config.database.clusterType || body.paymentType !== 'PayAsYouGo' || Number(body.VCUQuota || 0) > 0) throw new Error('Tablestore instance is not the approved CU billing/type configuration');
       if (body.instanceStatus !== 'normal') throw new Error('Tablestore instance is not available; check its status before retrying');
       return body;
@@ -62,7 +62,10 @@ export async function inspectDatabase(clients, config) {
   const result = { instance: config.database.instance, tables: [], issues: [] };
   // Collect independent permission failures so the operator can request them together.
   try { await verifyDatabaseRole(clients.ram, config); result.runtimeRole = 'ready'; }
-  catch (error) { result.issues.push({ component: 'runtimeRole', code: error.code || 'ConfigurationMismatch', message: error.code ? 'Review the RAM role and deployment statements in db-plan' : error.message }); }
+  catch (error) {
+    if (error.code === 'EntityNotExist.Role') result.runtimeRole = 'will-create';
+    else result.issues.push({ component: 'runtimeRole', code: error.code || 'ConfigurationMismatch', message: error.code ? 'Review the account deployment permissions and application role' : error.message });
+  }
   try {
     const exists = await instanceInfo(clients.control, config);
     result.instanceState = exists ? 'ready' : 'will-create';
@@ -76,7 +79,6 @@ export async function inspectDatabase(clients, config) {
 }
 
 export async function provisionDatabase(clients, config, { wait = () => delay(3000), attempts = 20, dnsAttempts = 200 } = {}) {
-  await verifyDatabaseRole(clients.ram, config);
   const exists = await instanceInfo(clients.control, config);
   const inputs = config.database.tables.map((table) => createTableInput(config, table));
   const describe = async (input) => {
@@ -97,6 +99,7 @@ export async function provisionDatabase(clients, config, { wait = () => delay(30
     if (!current) missing.push(input);
     else if (current.tableStatus !== 1) throw new Error(`Table ${input.tableMeta.tableName} is not active; retry after initialization or resolve its status`);
   }
+  await bootstrapDatabaseRole(clients.ram, config);
   if (!exists) {
     const created = await clients.control.createInstance(new OTS.CreateInstanceRequest({ instanceName: config.database.instance, clusterType: config.database.clusterType, instanceDescription: databaseNames(config).instanceDescription,
       networkTypeACL: ['INTERNET', 'VPC'], networkSourceACL: [] }));

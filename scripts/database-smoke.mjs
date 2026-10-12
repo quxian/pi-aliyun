@@ -19,9 +19,7 @@ try {
   const a = databaseAccess(config);
   assert.equal(plan.cost.estimated30Days, 0.308);
   assert(a.runtimePolicy.Statement.every((s) => s.Resource.every((r) => r.includes(`/table/${a.prefix}`))));
-  assert(!JSON.stringify(a.deploymentStatements).includes('ram:Create'));
   assert(!JSON.stringify(a.runtimePolicy).includes('ots:CreateTable'));
-  assert(a.deploymentStatements.filter((s) => s.Action.some((action) => action.startsWith('ram:'))).every((s) => s.Resource.every((r) => r.startsWith(`acs:ram:*:${config.accountId}:`))));
   assert.throws(() => validateConfig({ ...raw, database: { ...raw.database, instance: 'pi-aliyun' } }, temp), /reserved words/);
   assert.throws(() => validateConfig({ ...raw, backend: { ...raw.backend, environment: { TABLESTORE_ENDPOINT: 'https://attacker.invalid' } } }, temp), /conflicting/);
   assert.equal(config.database.instance, 'pi-app-8035e383');

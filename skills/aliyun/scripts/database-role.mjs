@@ -38,7 +38,7 @@ export async function verifyDatabaseRole(ram, config) {
   if (!policyEqual(version?.policyDocument, access.runtimePolicy)) throw new Error('Database runtime policy differs from the approved project scope');
 }
 
-// The deployment identity or platform authorizer needs the corresponding scoped RAM permissions.
+// The trusted deployment identity manages application runtime roles directly.
 export async function bootstrapDatabaseRole(ram, config) {
   const a = databaseAccess(config);
   const description = descriptionFor(config);

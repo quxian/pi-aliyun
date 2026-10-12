@@ -1,30 +1,27 @@
-# 数据库选择、创建和连接
+# 数据库选择与配置
 
-从查询、事务和持久化要求选择能满足业务的低成本方案。每个应用默认拥有自己的数据库资源，只复用该应用已经拥有的资源；不能因为账号中已有数据库就接入其它应用的实例。明确要求共同组成一个系统或共享数据时，再声明共享关系。不要使用 FC 临时磁盘保存长期数据，也不要借用宿主应用内部的数据库。
+按查询、事务和持久化要求选择满足业务的低成本方案。每个应用默认拥有自己的数据库实例；只有用户明确要求组成同一个系统或共享数据时才共享。FC 临时磁盘不能保存长期数据。
 
-| 业务需要 | 默认选择 | 创建与连接 |
-| --- | --- | --- |
-| 无需保存用户数据 | 不创建数据库 | 静态内容放应用自己的 OSS Bucket |
-| 按用户、ID、时间区间读取记录，单行条件更新能满足一致性 | 应用独立的 Tablestore CU 实例，在线应用默认 SSD | CLI 创建实例和表、配置连接，平台自动维护运行角色 |
-| 写多读少的日志、归档，能接受较高读取延迟 | Tablestore CU 模式 HYBRID | 独立部署可配置；当前平台默认授权为 SSD，扩展前核对范围 |
-| SQL/ORM、复杂关联、跨表事务，或余额/库存等强一致业务 | 满足业务的关系型数据库 | 复用本应用已有实例；接入其它实例必须明确共享关系，数据库和普通账号也需独立配置 |
-| 需要新建关系型实例 | 比较目标账号、地域的 RDS 实际报价 | 超出已批准范围时一次确认费用和权限；此版 CLI 不下单 RDS 或执行 SQL 迁移 |
+| 业务需要 | 选择 |
+| --- | --- |
+| 不保存用户数据 | 不创建数据库 |
+| 按用户、ID、时间范围读写，单行条件更新满足一致性 | 应用独立的 Tablestore CU 实例，在线应用通常选 SSD |
+| 写多读少的日志、归档，能接受更高读取延迟 | 评估 CU 模式 HYBRID 的价格和延迟 |
+| SQL/ORM、复杂关联、跨表事务、余额或库存一致性 | 满足业务的关系型数据库；不能只为低价强行使用 KV |
 
-Tablestore 的 SQL 查询入口不等同于 MySQL 协议和事务语义。局部事务只在同一分区键内；本包的 Node 宽表示例使用单行读写，未封装局部事务。个人收支记录可按用户及日期组织；转账、余额一致性或复杂报表需重新判断，不能仅凭应用名选择数据库。[官方模型与能力](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/what-is-tablestore)、[实例类型和限制](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/basic-concepts)。
+Tablestore 的 SQL 查询入口不等同于 MySQL 协议或关系型事务。其局部事务限于同一分区键；本包示例使用单行读写。个人收支记录和需要一致转账的账户系统并非同一种数据需求。[官方能力](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/what-is-tablestore)、[实例类型与限制](https://help.aliyun.com/zh/tablestore/table-store-service/product-overview/basic-concepts)。
 
-## 低成本与费用授权
+## 费用
 
-使用 CU 按量模式，不创建 VCU 计算资源，不配置预留读写，不默认启用多元索引、全局索引、跨地域复制、NAT 或额外备份服务。高性能型没有额外实例购买费；存储、实际读写和公网下行仍会计费，因此独立应用不必为节省固定实例月租而共用实例。容量型更便宜，但不适合作为对延迟敏感的在线应用默认值。
+Tablestore 使用 CU 按量计费，预留读写为 0，不默认启用索引、复制、VCU、NAT 或额外备份服务。CU 实例没有额外实例购买费，按存储、实际读写和流量计费，因此小应用不必为了节省固定实例月租而共享实例。
 
-`db-plan` 提供核查日期、[官方定价页](https://www.aliyun.com/price/product#/ots/detail/otsbag)、单价、用量假设及结果。它是公开价估算，不是实时询价；未核实的免费额度不抵扣。CU 模式没有整体费用硬上限，应用应鉴权、限制正文、分页及查询范围，并按业务需要限流。FC 实例数上限也不能限制月账单。
+`db-plan` 给出单价、核查日期和月用量假设，来源为[官方定价](https://www.aliyun.com/price/product#/ots/detail/otsbag)。它是公开价估算，不是实时账单或硬上限；不抵扣未核实的免费额度。沿用 `account.json` 中用户已确认的费用和权限范围，范围内直接部署，超出范围一次确认增量。
 
-沿用用户已批准的费用、服务和权限范围；应用名、表名或计划指纹变化不意味着需要再次审批。真正新增费用或超出范围时，将资源、月用量假设、购买与持续费用、网络暴露及完整权限增量一次说明。能够运行命令不等于获得消费授权。没有逐项目审批文件，`db-plan` 的 fingerprint 只是计划标识。
+需要关系型数据库时，核对目标账号和地域的实际订单、最低计费及续费价格。Serverless 不等于无固定费用，不能只比较首购优惠。此版支持通过 `backend.envFrom` 接入已有 SQL 数据库，不自动购买 RDS、创建 SQL Schema 或执行 SQL 迁移。独立实例不符合预算时，应解释取舍，不能自行让无关应用共享。[RDS 费用构成](https://help.aliyun.com/zh/rds/product-overview/billable-items-billing-methods-and-pricing/)。
 
-关系型数据库应核实最终订单的账号资格、地域、规格和续费价格，不因名字包含 Serverless 就默认购买。它可能包含最低计算计费与持续存储费用，暂停不等于零费用。独立实例增加成本时应说明取舍，不得自行改成多个无关应用共享。[RDS 费用构成](https://help.aliyun.com/zh/rds/product-overview/billable-items-billing-methods-and-pricing/)。
+## Tablestore
 
-## Tablestore 配置
-
-在项目 `aliyun.json` 中增加：
+在项目 `aliyun.json` 添加：
 
 ```json
 "database": {
@@ -32,19 +29,32 @@ Tablestore 的 SQL 查询入口不等同于 MySQL 协议和事务语义。局部
   "clusterType": "SSD",
   "tables": [{
     "name": "records",
-    "primaryKey": [{ "name": "owner", "type": "STRING" }, { "name": "id", "type": "STRING" }]
+    "primaryKey": [
+      { "name": "owner", "type": "STRING" },
+      { "name": "id", "type": "STRING" }
+    ]
   }],
-  "usage": { "storageGB": 0.1, "readCU": 100000, "writeCU": 10000, "internetGB": 0.1 }
+  "usage": {
+    "storageGB": 0.1,
+    "readCU": 100000,
+    "writeCU": 10000,
+    "internetGB": 0.1
+  }
 }
 ```
 
-不填写 `instance` 时，实例名为 `pi-app-` 加应用名 SHA256 的前 8 位；实例的管理描述记录所有者。默认表名前缀也按当前应用派生。独立部署可显式指定其它合法实例名，但仍须匹配所有权；平台部署使用确定性实例名。已有未知实例或其它应用实例不会被自动接管。
+实例名按应用名生成：`pi-app-` 加 SHA256 前 8 位；表名前缀也由应用名派生。数据库归属必须匹配，不能接管其它应用的实例。`usage` 是月用量估计，不是配额；存储是平均存量，流量是公网下行，HTTP 请求数不直接等于 CU 数。按业务填写假设。
 
-`usage` 是月用量估计，不是配额：`storageGB` 是平均存量，`internetGB` 是公网下行。CU 按官方规则计算，不能把所有 HTTP 请求都当作一个 CU。未填写时使用示例用量，Agent 应结合业务调整并说明假设。
+```sh
+pi-aliyun db-plan --config aliyun.json
+pi-aliyun deploy --config aliyun.json
+```
 
-新表永久保存（TTL=-1）、仅保留最新版本（maxVersions=1）、预留读写均为 0。重复发布验证主键、TTL、版本、预留和索引设置，不自动改结构、迁移或删数据。移除配置也不会删除云端资源。达到实例或表数配额时先核对配额与应用需求，不为绕过限制悄悄合并应用资源。
+`deploy` 使用部署身份创建或检查运行角色、实例和表，并注入连接变量。`db-setup` 可单独准备数据库，`db-inspect` 只读检查已有资源。无需逐项目手工创建 RAM 角色。
 
-需要明确共享时，在使用方应用加入：
+表永久保存（TTL=-1）、仅保留最新版本（maxVersions=1）、预留读写均为 0。重发版检查既有结构并保留数据，不自动变更主键、移动或删除数据。移除配置也不会删除云端资源。遇到实例或表数配额限制时处理配额，不悄悄合并应用。
+
+需要共享时，在使用方的 `database` 中增加：
 
 ```json
 "shared": {
@@ -53,35 +63,12 @@ Tablestore 的 SQL 查询入口不等同于 MySQL 协议和事务语义。局部
 }
 ```
 
-此字段放在 `database` 内，只能包含 `ownerProject` 和非空 `reason`。实例与物理表名前缀按所有者应用派生；使用方仍有自己的 FC 运行角色，其数据策略指向明确共享的表前缀。共享意味着共同的数据生命周期，停用所有者应用前需处理使用方依赖。仅仅“同属一个阿里云账号”不是共享理由。其它应用资源仍按自身归属管理。
+实例及物理表前缀随所有者应用，使用方仍保留自己的 FC 运行角色。共享带来共同的数据生命周期；同属一个阿里云账号不是共享理由。
 
-```sh
-node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-plan
-node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs db-inspect
-# 已在授权和费用范围内时直接继续；超出范围时先合并确认。
-node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
-```
+## 运行权限与连接
 
-`db-inspect` 只读并合并报告角色与数据库问题，不是 RAM 权限模拟器；首发缺少应用角色或实例可以是预期状态。`db-setup` 可单独创建/检查数据库，`deploy` 已包含此步骤。未安装平台时，单独授权的管理员可用 `db-role` 维护应用角色；长期管理多个应用应一次安装平台，避免逐项目手工授权。
+部署身份直接管理应用角色和策略；这是一次授予的受信任管理权限，详见[账号配置](../../../README.md#配置账号)。应用运行角色只信任 FC，只能读写自身或明确共享表前缀的数据行，没有建表、删表或 RAM 管理权限。部署密钥始终留在部署环境，不交给业务应用。
 
-## 权限与运行凭据
+CLI 注入非敏感变量 `TABLESTORE_INSTANCE`、`TABLESTORE_ENDPOINT` 和 JSON 对象 `TABLESTORE_TABLES`。默认使用需要 RAM 签名的 HTTPS 公网端点，数据库不公开读取；费用估算包含公网下行，小流量不额外引入 NAT。
 
-`db-plan.access` 提供固定角色、信任策略、数据策略和部署权限增量：
-
-- 应用运行角色只信任 FC，只允许本应用或明确共享表前缀的数据行读写，没有建表、删表或 RAM 管理权。
-- 部署身份一次获得约定应用范围内的实例列表/详情/创建、建表/查结构、读取运行角色/策略及仅向 FC 传递角色的权限。
-- 平台授权函数负责创建角色、绑定固定数据策略和维护策略版本；它检查归属与绑定，拒绝修改未知角色、未知策略或存在额外绑定的身份。只删除非默认旧策略版本，为新版本腾出容量并保留原默认版本。
-
-[平台 v2](../../../README.md#一次安装跨项目部署)的配置不指定共享数据库。部署身份可以创建范围内的应用独立实例，通过受保护授权函数维护业务角色；普通部署身份不拥有 RAM 管理权。更换平台范围须管理员一次审核；范围内应用不再要求人工创建角色或追加逐表权限。
-
-应用使用 FC 临时凭据，部署凭据始终留在部署主机。CLI 注入非敏感变量 `TABLESTORE_INSTANCE`、`TABLESTORE_ENDPOINT` 和 JSON 对象 `TABLESTORE_TABLES`。默认端点是需要 RAM 签名的 HTTPS 公网服务，数据不会公开读取；估算包含公网下行，不仅为小流量额外引入 VPC/NAT。
-
-Node 应用可复制 [tablestore-runtime.mjs](../assets/tablestore-runtime.mjs)，自行安装 `tablestore`，使用示例的 `protobufjs` override。Debian 10 从每个 FC 请求头取得新临时凭据，其它受支持运行时使用 FC 环境凭据。每次请求创建客户端，不缓存请求头凭据。业务鉴权在数据库访问前完成，不回显请求头、SDK 错误或秘密。[FC 上下文说明](https://help.aliyun.com/zh/functioncompute/fc/context-and-log-format-1)。
-
-完整开发与持久化验证见[云端便笺](../../../examples/durable-notes/README.md)。已有 SQL 连接经 `backend.envFrom` 注入，需要自行配置数据库账号、Schema 和网络；独立或共享关系必须明确。生成连接变量不代表已经创建 RDS。
-
-## 迁移到应用独立实例
-
-日常 `deploy` 不移动数据库内容，也不删除旧数据。已有应用需要更换实例时，将迁移作为单独维护操作：暂停所有写入，保存私有备份并保留字段类型与时间戳，复制后比较行数和内容哈希，再切换连接并验证应用。验证通过后才恢复写入；始终保留源数据和备份，不能只改实例名就宣布迁移完成。
-
-备份目录使用 0700、文件使用 0600，不放在网站目录或 Git 中。停写前准备好回退路径；停写范围应覆盖定时任务等全部写入者。迁移所需临时数据权限、复制读写费用及旧数据保留成本超出已有授权时，事前一次确认。普通运行角色仍只拥有当前目标数据权限。
+Node 后端可使用 [tablestore-runtime.mjs](../assets/tablestore-runtime.mjs)，安装 `tablestore` 并采用示例的 `protobufjs` override。Debian 10 从每个 FC 请求取得新临时凭据，其它受支持运行时使用 FC 环境凭据；每次请求创建客户端，不缓存请求头凭据。先做业务鉴权，不回显请求头、SDK 错误或秘密。完整示例见[云端便笺](../../../examples/durable-notes/README.md)。

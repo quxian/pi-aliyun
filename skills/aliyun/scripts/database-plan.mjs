@@ -6,9 +6,6 @@ function fields(value, allowed, label) {
   for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`Unknown ${label} field: ${key}`);
 }
 const hash = (value) => createHash('sha256').update(value).digest('hex');
-const canonical = (value) => JSON.stringify(value, function (_key, item) {
-  return item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item;
-});
 export function databaseNames(config) {
   const suffix = `${config.project.slice(0, 32)}-${hash(config.project).slice(0, 8)}`;
   const roleName = `pi-db-${suffix}`;
@@ -88,16 +85,7 @@ export function databaseAccess(config) {
     ...names,
     trustPolicy: { Version: '1', Statement: [{ Effect: 'Allow', Action: ['sts:AssumeRole'], Principal: { Service: ['fc.aliyuncs.com'] } }] },
     runtimePolicy: { Version: '1', Statement: [allow(['ots:GetRow', 'ots:PutRow', 'ots:UpdateRow', 'ots:DeleteRow', 'ots:GetRange', 'ots:BatchGetRow', 'ots:BatchWriteRow'], tables)] },
-    administratorSetup: 'The configured deployment identity or platform authorizer creates and updates this application-owned role and fixed data policy. Only this policy may be attached to the role.',
-    deploymentStatements: [
-      allow(['ots:ListInstance'], `acs:ots:${config.region}:${config.accountId}:instance/*`),
-      allow(['ots:GetInstance', 'ots:InsertInstance'], instance),
-      allow(['ots:CreateTable', 'ots:DescribeTable'], tables),
-      // RAM API authorization uses the global '*' region, unlike a role's returned ARN.
-      allow(['ram:GetRole', 'ram:ListPoliciesForRole'], `acs:ram:*:${config.accountId}:role/${names.roleName}`),
-      allow(['ram:GetPolicy', 'ram:GetPolicyVersion'], `acs:ram:*:${config.accountId}:policy/${names.policyName}`),
-      { ...allow(['ram:PassRole'], `acs:ram:*:${config.accountId}:role/${names.roleName}`), Condition: { StringEquals: { 'acs:Service': 'fc.aliyuncs.com' } } },
-    ],
+
   };
 }
 
@@ -127,5 +115,5 @@ export function databasePlan(config) {
       limit: 'Estimate only, not a bill cap. CU mode has no spending hard limit; authentication, bounded reads and rate limits belong in the application.',
     },
   };
-  return { ...value, fingerprint: hash(canonical(value)) };
+  return value;
 }

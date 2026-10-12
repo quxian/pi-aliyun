@@ -180,12 +180,11 @@ try {
   await bindFrontendDomain(verificationOss, config, tls, { dns: verificationDns, wait: async () => {} });
   assert.equal(verificationRecords.length, 2);
 
-  const policyConfig = { ...config, frontend: { ...config.frontend, bucket: `pi-aliyun-smoke-${config.accountId}` } };
+  const policyConfig = { accountId: config.accountId, region: config.region, zone: config.dns.zone };
   const policy = deploymentPolicy(policyConfig);
   assert(policy.Statement[0].Action.includes('oss:CreateCnameToken'));
   assert.equal(policy.Statement[0].Resource[0], `acs:oss:*:${config.accountId}:pi-aliyun-*-${config.accountId}`);
-  assert(!JSON.stringify(policy).includes('ram:'));
-  assert.throws(() => deploymentPolicy({ ...policyConfig, frontend: { bucket: 'unrelated' } }), /requires/);
+  assert(JSON.stringify(policy).includes('ram:CreateRole'));
 
   raw.tls.acme = { email: 'smoke@example.com', accountKeyFile: '.aliyun/tls/account-key.pem', agreeToTerms: true };
   assert.throws(() => validateConfig({ ...raw, tls: { ...raw.tls, acme: { ...raw.tls.acme, proxyUrl: 'http://user:secret@localhost:7890' } } }, temp), /without credentials/);

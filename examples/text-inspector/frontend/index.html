@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#193e35">
+  <title>文字计量台</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header><a href="/" aria-label="文字计量台首页"><span class="mark">文</span>文字计量台</a><span class="edition">TEXT LAB · 02</span></header>
+  <main>
+    <section class="intro"><p class="eyebrow">给文字一个清晰的刻度</p><h1>写下文字，<br>看看它的分量。</h1><p>一段草稿、一句灵感，或一整页笔记。<br>统计字符、行数与字节，不保存你的文本。</p></section>
+    <section class="workspace" aria-label="文本统计工具">
+      <form id="form"><div class="editor-label"><label for="text">待统计文本</label><span>最多 10,000 字符</span></div><textarea id="text" name="text" maxlength="10000" required spellcheck="false">你好，世界。
+让每一个字，都恰到好处。</textarea><div class="toolbar"><span id="status" role="status" aria-live="polite">统计结果由服务器返回</span><button type="submit">统计文字 <span aria-hidden="true">↗</span></button></div></form>
+      <dl class="results" aria-label="统计结果"><div><dt>全部字符</dt><dd id="characters">—</dd></div><div><dt>去除空白</dt><dd id="nonWhitespace">—</dd></div><div><dt>行数</dt><dd id="lines">—</dd></div><div><dt>UTF-8 字节</dt><dd id="bytes">—</dd></div></dl>
+      <p class="note">字符按可见字形统计，组合表情也算一个。换行和空格计入全部字符。</p>
+    </section>
+  </main>
+  <footer><span>文字有长短，表达有分寸。</span><span id="receipt">等待第一次统计</span></footer>
+</body>
+</html>

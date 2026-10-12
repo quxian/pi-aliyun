@@ -9,8 +9,10 @@ import acme from 'acme-client';
 import * as FC from '@alicloud/fc20230330';
 import { validateConfig, plan } from '../skills/aliyun/scripts/config.mjs';
 import { collectFiles, createArchive, buildArtifacts } from '../skills/aliyun/scripts/artifacts.mjs';
-import { ensureCname, deployFrontend, deployBackend, bindBackendDomain, cacheControl, websiteXml, functionInput } from '../skills/aliyun/scripts/cloud.mjs';
+import { ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBackendDomain, cacheControl, websiteXml, functionInput } from '../skills/aliyun/scripts/cloud.mjs';
 import { uploadPrivateKey } from '../skills/aliyun/scripts/tls.mjs';
+import { deploymentPolicy } from '../skills/aliyun/scripts/policy.mjs';
+import { registerRenewal, renewRegistered, renewalUnits } from '../skills/aliyun/scripts/renewal.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temp = await mkdtemp(join(tmpdir(), 'pi-aliyun-smoke-'));
@@ -132,7 +134,61 @@ try {
   blockPublicAccess = true;
   await assert.rejects(deployFrontend(oss, config, artifacts.frontendFiles, tls), /not managed/);
   assert.equal(blockPublicAccess, true);
-  console.log('Smoke passed: local CLI/build/archive, SDK models, FC create/update, OSS publication order/ownership, DNS idempotence/conflicts. No cloud APIs called.');
+
+  const verificationRecords = [{ RR: '_dnsauth.app', type: 'TXT', value: 'another-service', status: 'ENABLE', recordId: 'unrelated' }];
+  let verifyAttempts = 0;
+  const verificationDns = {
+    describeDomainRecords: async () => ({ body: { totalCount: verificationRecords.length, domainRecords: { record: verificationRecords } } }),
+    addDomainRecord: async (value) => { verificationRecords.push({ ...value, recordId: 'created-here', status: 'ENABLE' }); return { body: { recordId: 'created-here' } }; },
+    deleteDomainRecord: async (value) => { assert.equal(value.recordId, 'created-here'); verificationRecords.splice(verificationRecords.findIndex((record) => record.recordId === value.recordId), 1); },
+  };
+  const verificationOss = {
+    getBucketTags: async () => ({ tag: { 'pi-aliyun-project': config.project } }),
+    request: async ({ subres }) => {
+      if (subres.comp === 'token') return { data: { Bucket: config.frontend.bucket, Cname: config.frontend.domain, Token: 'verification-only' } };
+      verifyAttempts++;
+      if (verifyAttempts <= 2) throw missing('NeedVerifyDomainOwnership');
+      assert(verificationRecords.some((record) => record.value === 'verification-only'));
+    },
+  };
+  await bindFrontendDomain(verificationOss, config, tls, { dns: verificationDns, wait: async () => {} });
+  assert.equal(verifyAttempts, 3);
+  assert.deepEqual(verificationRecords.map((record) => record.recordId), ['unrelated']);
+  const neverVerified = { ...verificationOss, request: async (value) => {
+    if (value.subres.comp === 'token') return verificationOss.request(value);
+    throw missing('NeedVerifyDomainOwnership');
+  } };
+  await assert.rejects(bindFrontendDomain(neverVerified, config, tls, { dns: verificationDns, attempts: 2, wait: async () => {} }), /timed out/);
+  assert.deepEqual(verificationRecords.map((record) => record.recordId), ['unrelated']);
+  verificationRecords.push({ RR: '_dnsauth.app', type: 'TXT', value: 'verification-only', status: 'ENABLE', recordId: 'preexisting' });
+  verifyAttempts = 0;
+  await bindFrontendDomain(verificationOss, config, tls, { dns: verificationDns, wait: async () => {} });
+  assert.equal(verificationRecords.length, 2);
+
+  const policyConfig = { ...config, frontend: { ...config.frontend, bucket: `pi-aliyun-smoke-${config.accountId}` } };
+  const policy = deploymentPolicy(policyConfig);
+  assert(policy.Statement[0].Action.includes('oss:CreateCnameToken'));
+  assert.equal(policy.Statement[0].Resource[0], `acs:oss:*:${config.accountId}:pi-aliyun-*-${config.accountId}`);
+  assert(!JSON.stringify(policy).includes('ram:'));
+  assert.throws(() => deploymentPolicy({ ...policyConfig, frontend: { bucket: 'unrelated' } }), /requires/);
+
+  raw.tls.acme = { email: 'smoke@example.com', accountKeyFile: '.aliyun/tls/account-key.pem', agreeToTerms: true };
+  const registry = join(temp, 'renewal/registry.json');
+  const otherConfig = join(temp, 'other.json');
+  await writeFile(join(temp, 'aliyun.json'), JSON.stringify(raw));
+  await writeFile(otherConfig, JSON.stringify({ ...raw, project: 'other' }));
+  await registerRenewal(join(temp, 'aliyun.json'), registry);
+  await registerRenewal(join(temp, 'aliyun.json'), registry);
+  await registerRenewal(otherConfig, registry);
+  const renewed = [];
+  await assert.rejects(renewRegistered(registry, { run: async (path) => { renewed.push(path); if (renewed.length === 1) throw new Error('simulated failure'); } }), /1 certificate/);
+  assert.deepEqual(renewed, [join(temp, 'aliyun.json'), otherConfig]);
+  const units = renewalUnits({ user: 'iceberg-client', registryPath: registry });
+  assert.match(units['pi-aliyun-renew.service'], /User=iceberg-client/);
+  assert.match(units['pi-aliyun-renew.service'], /renew-all --registry/);
+  assert.match(units['pi-aliyun-renew.timer'], /Persistent=true/);
+  assert.throws(() => renewalUnits({ user: 'root', registryPath: registry }), /non-root/);
+  console.log('Smoke passed: local CLI/build/archive, SDK models, FC create/update, OSS publication/ownership verification, DNS conflicts/cleanup, cross-project policy and renewal registry/units. No cloud APIs called.');
 } finally {
   delete process.env.PI_ALIYUN_SMOKE_DATABASE;
   await rm(temp, { recursive: true, force: true });

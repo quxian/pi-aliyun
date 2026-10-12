@@ -4,6 +4,7 @@ import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
 import OSS from 'ali-oss';
 import { contentType } from 'mime-types';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const Client = (module) => module.default || module;
 export async function createClients(config, { services = ['dns', 'fc', 'oss'] } = {}) {
@@ -33,8 +34,7 @@ export function isMissing(error) {
   return ['FunctionNotFound', 'TriggerNotFound', 'DomainNameNotFound', 'CustomDomainNotFound', 'NoSuchBucket'].includes(error.code);
 }
 
-export async function ensureCname(dns, config, domain, target) {
-  const RR = domain.slice(0, -(config.dns.zone.length + 1));
+async function domainRecords(dns, config, RR) {
   const records = [];
   for (let pageNumber = 1; ; pageNumber++) {
     const response = await dns.describeDomainRecords(new DNS.DescribeDomainRecordsRequest({ domainName: config.dns.zone, RRKeyWord: RR, searchMode: 'EXACT', pageNumber, pageSize: 500 }));
@@ -42,6 +42,12 @@ export async function ensureCname(dns, config, domain, target) {
     records.push(...batch.filter((item) => item.RR === RR));
     if (pageNumber * 500 >= (response.body?.totalCount || 0)) break;
   }
+  return records;
+}
+
+export async function ensureCname(dns, config, domain, target) {
+  const RR = domain.slice(0, -(config.dns.zone.length + 1));
+  const records = await domainRecords(dns, config, RR);
   if (records.some((item) => item.type !== 'CNAME' || item.line !== 'default') || records.length > 1) throw new Error(`DNS ${domain} has conflicting records; resolve them before deployment`);
   const record = records[0];
   if (record?.status === 'DISABLE') throw new Error(`DNS ${domain} is disabled; enable the intended record before deployment`);
@@ -64,7 +70,7 @@ export function cacheControl(key) {
   return 'no-cache';
 }
 
-export async function deployFrontend(oss, config, files, tls) {
+export async function deployFrontend(oss, config, files, tls, options = {}) {
   const f = config.frontend;
   try {
     const info = await oss.getBucketInfo(f.bucket);
@@ -87,14 +93,49 @@ export async function deployFrontend(oss, config, files, tls) {
   for (const file of ordered) {
     await oss.put(file.key, file.path, { headers: { 'Content-Type': contentType(file.key) || 'application/octet-stream', 'Cache-Control': cacheControl(file.key) } });
   }
-  await bindFrontendDomain(oss, config, tls);
+  await bindFrontendDomain(oss, config, tls, options);
 }
 
-export async function bindFrontendDomain(oss, config, tls) {
+export async function bindFrontendDomain(oss, config, tls, { dns, attempts = 25, wait = () => delay(5000) } = {}) {
   const tags = await oss.getBucketTags(config.frontend.bucket);
   if (tags.tag['pi-aliyun-project'] !== config.project) throw new Error('OSS bucket is not managed by this project');
   // PutCname is an official OSS API not exposed by ali-oss's convenience helpers.
-  await oss.request({ method: 'POST', bucket: config.frontend.bucket, subres: { cname: '', comp: 'add' }, content: certificateXml(config.frontend.domain, tls), mime: 'xml', successStatuses: [200] });
+  const bind = () => oss.request({ method: 'POST', bucket: config.frontend.bucket, subres: { cname: '', comp: 'add' }, content: certificateXml(config.frontend.domain, tls), mime: 'xml', successStatuses: [200] });
+  try { await bind(); return; }
+  catch (error) { if (error.code !== 'NeedVerifyDomainOwnership' || !dns) throw error; }
+  const { bucket, domain } = config.frontend;
+  console.log(`Verifying OSS domain ownership through DNS: ${domain}`);
+  let token;
+  try {
+    const response = await oss.request({ method: 'POST', bucket, subres: { cname: '', comp: 'token' }, content: `<BucketCnameConfiguration><Cname><Domain>${xml(domain)}</Domain></Cname></BucketCnameConfiguration>`, mime: 'xml', xmlResponse: true, successStatuses: [200] });
+    if (response.data?.Bucket !== bucket || response.data?.Cname !== domain || typeof response.data?.Token !== 'string' || !response.data.Token) throw new Error('OSS returned an invalid domain verification token');
+    token = response.data.Token;
+  } catch (error) {
+    if (error.code !== 'NoNeedCreateCnameToken') throw error;
+    await bind(); return;
+  }
+  const RR = `_dnsauth.${domain.slice(0, -(config.dns.zone.length + 1))}`;
+  const records = await domainRecords(dns, config, RR);
+  if (records.some((record) => record.type !== 'TXT' || record.status === 'DISABLE')) throw new Error(`DNS verification record ${RR} has conflicting or disabled records`);
+  let createdRecordId;
+  try {
+    if (!records.some((record) => record.value === token)) {
+      const response = await dns.addDomainRecord(new DNS.AddDomainRecordRequest({ domainName: config.dns.zone, RR, type: 'TXT', value: token, TTL: 600, line: 'default' }));
+      createdRecordId = response.body?.recordId;
+      if (!createdRecordId) throw new Error('AliDNS did not return the OSS verification record ID');
+    }
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try { await bind(); console.log(`OSS domain verified and bound: ${domain}`); return; }
+      catch (error) { if (error.code !== 'NeedVerifyDomainOwnership') throw error; }
+      if (attempt < attempts - 1) await wait();
+    }
+    throw new Error(`OSS domain verification timed out for ${domain}; check authoritative DNS and retry deployment`);
+  } finally {
+    if (createdRecordId) {
+      try { await dns.deleteDomainRecord(new DNS.DeleteDomainRecordRequest({ recordId: createdRecordId })); }
+      catch { console.error(`Could not remove this run's OSS verification TXT record ${createdRecordId} (${config.dns.zone}); remove it after checking the record`); }
+    }
+  }
 }
 
 export function functionInput(config, archive, environment) {

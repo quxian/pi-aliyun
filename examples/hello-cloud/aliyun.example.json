@@ -4,7 +4,7 @@
   "region": "cn-beijing",
   "accountId": "1234567890123456",
   "frontend": {
-    "bucket": "replace-with-your-unique-demo-bucket",
+    "bucket": "pi-aliyun-demo-1234567890123456",
     "dir": "dist/frontend",
     "build": { "cwd": ".", "command": ["node", "build.mjs"] },
     "domain": "demo.example.com",

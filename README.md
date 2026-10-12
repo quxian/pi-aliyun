@@ -4,7 +4,7 @@
 
 包内包含原生 `aliyun` skill、配置模板和可独立运行的 Node CLI，不依赖宿主应用，也不绑定前后端框架。
 
-想直接跑通前后端部署，可从[云端回声示例](examples/hello-cloud/README.md)开始：静态页面调用普通 Node HTTP 接口，无数据库、无应用运行依赖。
+想直接跑通前后端部署，可从[云端回声示例](examples/hello-cloud/README.md)开始：静态页面调用普通 Node HTTP 接口，无数据库、无应用运行依赖。另有[文字计量台](examples/text-inspector/README.md)，可用独立资源验证跨项目部署。
 
 ## 安装
 
@@ -39,7 +39,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs build
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 ```
 
-所有命令都接受 `--config path/to/aliyun.json`。JSON 内的文件路径以配置文件所在目录为基准。
+项目命令接受 `--config path/to/aliyun.json`。JSON 内的文件路径以配置文件所在目录为基准。
 
 - `init` 写入配置模板，已有文件不会被覆盖。
 - `doctor` 检查本地配置和目录，不解析云凭据，也不验证云权限。
@@ -47,6 +47,8 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - `build` 运行本地构建并检查产物，不修改云资源。
 - `deploy` 构建后核对账号、部署前后端、配置域名和证书。
 - `renew` 检查或续期证书并上传到现有域名，不重新构建业务代码。
+- `policy` 输出供管理员审核的跨项目 RAM 策略，不会自行修改授权。
+- `schedule` 将项目配置登记到持久的续期清单；`renew-all` 检查清单内所有项目。
 
 [配置模板](skills/aliyun/assets/aliyun.example.json) 使用静态前端和已打包的 Node HTTP 后端作为示例，按实际项目调整：
 
@@ -79,12 +81,14 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 尽量将 RAM 身份的权限限制到本项目资源。OSS 可指定专用 Bucket，AliDNS 可指定域名区域；部分 FC 接口只支持账号级资源授权，不能仅凭函数名就认为已隔离权限。实例角色也不是 Agent 级隔离，同机有权访问实例元数据的进程可能取得相同权限。按对应官方 RAM 文档限定资源范围，所需操作包括：
 
 - STS `GetCallerIdentity`：核对目标账号。
-- OSS：读取/创建 Bucket、读取/写入标签、`PutBucketPublicAccessBlock`、设置 ACL 和静态网站、上传对象、`PutCname`。不需要删除对象。
+- OSS：读取/创建 Bucket、读取/写入标签、`PutBucketPublicAccessBlock`、设置 ACL 和静态网站、上传对象、`CreateCnameToken`、`PutCname`。不需要删除对象。
 - OSS 证书托管还需要 `yundun-cert:DescribeSSLCertificatePrivateKey`、`yundun-cert:DescribeSSLCertificatePublicKeyDetail`、`yundun-cert:CreateSSLCertificate`，见 `PutCname` 文档。
 - FC：读取/创建/更新函数、弹性策略和实例配额、HTTP 触发器、自定义域名；配置运行时角色时还需要传递该角色的权限。
 - AliDNS：读取域名记录、添加/更新记录；启用 ACME 时还需要删除本次创建的 TXT 记录。
 
 工具不会自动授予权限；账号需已开通所使用的云服务。FC 运行时角色与部署身份分开，应用通过运行时角色取得访问云服务的临时凭据。数据库密码等业务秘密使用 `backend.envFrom`，不要把部署凭据转交应用。这些业务值会写入 FC 环境变量，不会打印到 CLI 或保存到生成的本地产物。
+
+同一部署身份要管理多个项目时，可执行 `policy --config aliyun.json > deployment-policy.json`。管理员审核后将策略绑定到部署角色一次，后续符合范围的项目可直接部署。生成的策略将 OSS 限定到本账号的 `pi-aliyun-*-账号ID` 网站 Bucket，AliDNS 限定到配置的 `dns.zone`，FC 和证书操作保留所需账号级授权，不包含 RAM 管理权限。新项目使用不同的项目名、Bucket、函数名和子域名；标签检查能防止误用其它项目资源，但不构成多个 Agent 之间的权限隔离。不同 DNS 区域、额外云产品或函数运行时角色仍需管理员另行授权。
 
 前端 Bucket 只放可公开的网站文件。OSS 新建 Bucket 默认阻止公共访问，部署会关闭本项目专用 Bucket 的这一开关，再设置公共读；不会修改账号级开关。如果账号级策略阻止公共访问，部署会失败，需要管理员按实际网站托管需求处理。参见 [OSS 静态网站托管](https://help.aliyun.com/zh/oss/user-guide/hosting-static-websites)。
 
@@ -92,7 +96,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 
 使用 `app.example.com`、`api.example.com` 这样的两个子域名。该区域的权威 DNS 必须已经是 AliDNS。中国内地 OSS/FC 需完成适用的 ICP 备案和阿里云接入要求。工具不购买域名、不提交备案、不更改注册商的 NS，也不额外创建 CDN、ESA、API 网关或 NAT。
 
-如果域名不在当前账号注册，OSS 可能要求单独验证所有权。出现 `NeedVerifyDomainOwnership` 时，按 OSS 官方流程完成 TXT 验证后重试；拥有 DNS 区域权限不会绕过这项验证。
+OSS 要求验证所有权时，CLI 会调用 [CreateCnameToken](https://help.aliyun.com/zh/oss/developer-reference/createcnametoken/)，在 AliDNS 创建 `_dnsauth` TXT 记录，等待 OSS 验证后完成域名和证书绑定，并删除本次创建的 TXT 记录。已有的 TXT 记录不会被删除。验证超时会明确失败，检查权威 DNS 后可重试；无需进入 OSS 控制台手动绑定。
 
 默认提供 PEM 证书链和私钥文件。工具验证有效期、私钥匹配和域名覆盖，并直接上传到 OSS 和 FC。受管理的 FC 域名仅启用 HTTPS，HTTP 触发器默认公网 URL 被关闭。OSS 绑定域名支持 HTTPS，但工具不会自动禁用其 HTTP 访问。两个访问地址都以 HTTPS 返回。
 
@@ -119,7 +123,26 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs renew --config /path/to/project/aliyun.json
 ```
 
-需要持续自动续期时，让部署主机的调度器每天执行这个命令。CLI 不会自己安装 cron 或云定时任务；调度器需要同一配置、凭据和持久密钥目录。密钥目录放在包安装目录、Git 和两个上传目录之外。如果进程在签发期间被强制结束，确认没有签发任务运行后，可能需要人工清理锁文件和临时 DNS TXT 记录。
+需要持续自动续期时，在持久的 Linux 部署主机上使用内置 systemd 入口。先以实际部署服务用户登记项目，再由管理员安装一次定时器：
+
+```sh
+# 部署服务用户执行；默认清单为 ~/.config/pi-aliyun/renewal.json
+node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs schedule --config /persistent/my-app/aliyun.json
+
+# 管理员执行；替换用户和清单路径
+sudo node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs install-renewal --user deploy-user --registry /home/deploy-user/.config/pi-aliyun/renewal.json
+
+# 验证一次执行和下次调度
+sudo systemctl start pi-aliyun-renew.service
+systemctl list-timers pi-aliyun-renew.timer
+journalctl -u pi-aliyun-renew.service
+```
+
+定时器按服务器时区每天 03:15–03:30 检查，停机错过后会补跑；证书进入续期窗口才重新签发。每个项目单独运行，一个失败不会阻止其它项目，整体失败会记录到 systemd 日志。这不是告警通知服务。续期以指定的非 root 用户运行，需要与部署相同的凭据、网络访问和持久密钥目录。
+
+以后新增项目只需以同一服务用户执行 `schedule`，不必重新安装定时器。清单仅存配置文件绝对路径，重复登记不会重复执行；停用项目时从清单删除对应路径。包升级需保持安装路径不变；换路径后重新执行 `install-renewal`。其它系统或 CI 可每天调用 `renew-all --registry /persistent/renewal.json`。
+
+项目、续期清单和密钥均放在包安装目录与 Git 之外，密钥也不能在两个上传目录内。如果进程在签发期间被强制结束，确认没有签发任务运行后，可能需要人工清理锁文件和临时 DNS TXT 记录。
 
 ## 发布行为与边界
 

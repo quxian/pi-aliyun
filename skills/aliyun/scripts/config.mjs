@@ -145,7 +145,7 @@ export async function doctor(config) {
   const credentialNames = ['ALIBABA_CLOUD_ACCESS_KEY_ID', 'ALIBABA_CLOUD_ACCESS_KEY_SECRET', 'ALIBABA_CLOUD_SECURITY_TOKEN', 'ALIBABA_CLOUD_ECS_METADATA', 'ALIBABA_CLOUD_ROLE_ARN', 'ALIBABA_CLOUD_OIDC_TOKEN_FILE', 'ALIBABA_CLOUD_CREDENTIALS_URI', 'ALIBABA_CLOUD_CREDENTIALS_FILE'];
   checks.push(`Credential environment names present: ${credentialNames.filter((key) => Object.hasOwn(process.env, key)).join(', ') || 'none; SDK may use its default credential file/instance chain'}`);
   checks.push('Credentials were not resolved; cloud permissions and ownership were not checked');
-  if (config.database) checks.push('Managed database configured; review db-plan and db-inspect, then record user approval before the first deployment');
+  if (config.database) checks.push('Managed database configured; db-plan and db-inspect show its ownership, cost assumptions and required access; reuse existing authorization within its scope');
   if (config.tls.acme) checks.push('ACME configured; deploy/renew may contact CA and temporarily change DNS TXT records');
   else for (const path of [config.tls.certFile, config.tls.keyFile]) await access(path).catch(() => fail('Configured TLS files must exist before deploy'));
   return checks;

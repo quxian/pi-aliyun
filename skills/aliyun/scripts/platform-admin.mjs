@@ -42,7 +42,7 @@ export async function preparePlatformBundle(profile, output) {
   await mkdir(output, { recursive: true });
   const temp = await mkdtemp(join(tmpdir(), 'pi-aliyun-platform-'));
   try {
-    await writeFile(join(temp, 'settings.json'), JSON.stringify({ accountId: profile.accountId, region: profile.region, instance: profile.instance, authorizerFunction: profile.authorizerFunction }));
+    await writeFile(join(temp, 'settings.json'), JSON.stringify({ version: 2, accountId: profile.accountId, region: profile.region, authorizerFunction: profile.authorizerFunction }));
     const source = fileURLToPath(new URL('.', import.meta.url));
     const files = [
       { path: join(source, 'authorizer-handler.mjs'), key: 'index.mjs' },
@@ -61,17 +61,28 @@ export async function preparePlatformBundle(profile, output) {
 function parse(value) { try { return JSON.parse(value); } catch { return JSON.parse(decodeURIComponent(value)); } }
 // RAM's console may collapse singleton lists; compare their meanings, not formatting.
 function normalize(policy) {
-  const list = v => Array.isArray(v) ? v : [v];
+  const list = v => Array.isArray(v) ? [...v] : [v];
   return { ...policy, Statement: list(policy.Statement).map(s => ({ ...s,
     ...(s.Action ? { Action: list(s.Action).sort() } : {}), ...(s.Resource ? { Resource: list(s.Resource).sort() } : {}),
     ...(s.Principal ? { Principal: Object.fromEntries(Object.entries(s.Principal).map(([k,v]) => [k,list(v).sort()])) } : {}),
   })) };
 }
-async function ensurePolicy(ram, name, expected) {
+export async function ensurePlatformPolicy(ram, name, expected, roleName) {
   try {
     const p = (await ram.getPolicy(new RAM.GetPolicyRequest({ policyName: name, policyType: 'Custom' }))).body.policy;
+    if (p.description !== marker) throw new Error(`Existing platform policy is not managed by pi-aliyun: ${name}`);
+    const entities = (await ram.listEntitiesForPolicy(new RAM.ListEntitiesForPolicyRequest({ policyName: name, policyType: 'Custom' }))).body;
+    if (!entities || (entities.users?.user || []).length || (entities.groups?.group || []).length || (entities.roles?.role || []).some(r => r.roleName !== roleName)) throw new Error(`Existing platform policy has unrelated attachments: ${name}`);
     const v = (await ram.getPolicyVersion(new RAM.GetPolicyVersionRequest({ policyName: name, policyType: 'Custom', versionId: p.defaultVersion }))).body.policyVersion;
-    if (p.description !== marker || !isDeepStrictEqual(normalize(parse(v.policyDocument)), normalize(expected))) throw new Error(`Existing platform policy differs: ${name}; administrator review required`);
+    if (isDeepStrictEqual(normalize(parse(v.policyDocument)), normalize(expected))) return;
+    const versions = (await ram.listPolicyVersions(new RAM.ListPolicyVersionsRequest({ policyName: name, policyType: 'Custom' }))).body?.policyVersions?.policyVersion;
+    if (!Array.isArray(versions) || !versions.length) throw new Error(`Cannot inspect existing platform policy versions: ${name}`);
+    if (versions.length >= 5) {
+      const oldest = versions.filter(v => v.isDefaultVersion === false && v.versionId !== p.defaultVersion).sort((a, b) => String(a.createDate).localeCompare(String(b.createDate)))[0];
+      if (!oldest?.versionId) throw new Error(`No replaceable platform policy version: ${name}`);
+      await ram.deletePolicyVersion(new RAM.DeletePolicyVersionRequest({ policyName: name, versionId: oldest.versionId }));
+    }
+    await ram.createPolicyVersion(new RAM.CreatePolicyVersionRequest({ policyName: name, policyDocument: JSON.stringify(expected), setAsDefault: true }));
   } catch (error) {
     if (error.code !== 'EntityNotExist.Policy') throw error;
     await ram.createPolicy(new RAM.CreatePolicyRequest({ policyName: name, description: marker, policyDocument: JSON.stringify(expected) }));
@@ -81,7 +92,15 @@ export async function bootstrapPlatform(profile, clients, archive, fingerprint) 
   const plan = platformPlan(profile);
   if (fingerprint !== plan.fingerprint) throw new Error('platform-bootstrap requires the exact user-approved platform-plan fingerprint');
   const Client = RAMModule.default || RAMModule;
-  const ram = new Client({ credential: clients.credential, endpoint: 'ram.aliyuncs.com', protocol: 'https' });
+  const ram = clients.ram || new Client({ credential: clients.credential, endpoint: 'ram.aliyuncs.com', protocol: 'https' });
+  // The execution identity is chosen during credential setup. Do not guess its trust or create paid resources before checking it.
+  try {
+    const deploymentRole = (await ram.getRole(new RAM.GetRoleRequest({ roleName: profile.deployerRole }))).body?.role;
+    if (!deploymentRole) throw new Error('RAM did not return the configured deployment role');
+  } catch (error) {
+    if (error.code === 'EntityNotExist.Role') throw new Error(`Configured deployment role ${profile.deployerRole} does not exist. Configure the execution identity and its credentials first; no platform resources were changed.`);
+    throw error;
+  }
   // This entire command requires a separate administrator identity. Never use the deployment role.
   try {
     const r = (await ram.getRole(new RAM.GetRoleRequest({ roleName: plan.authorizerRole }))).body.role;
@@ -92,7 +111,7 @@ export async function bootstrapPlatform(profile, clients, archive, fingerprint) 
   }
   const attached = (await ram.listPoliciesForRole(new RAM.ListPoliciesForRoleRequest({ roleName: plan.authorizerRole }))).body?.policies?.policy || [];
   if (attached.some(p => p.policyName !== plan.authorizerPolicyName || p.policyType !== 'Custom')) throw new Error('Authorizer role has unrelated policies');
-  await ensurePolicy(ram, plan.authorizerPolicyName, plan.authorizerPolicy);
+  await ensurePlatformPolicy(ram, plan.authorizerPolicyName, plan.authorizerPolicy, plan.authorizerRole);
   await ram.attachPolicyToRole(new RAM.AttachPolicyToRoleRequest({ roleName: plan.authorizerRole, policyName: plan.authorizerPolicyName, policyType: 'Custom' }));
   const values = { functionName: profile.authorizerFunction, description: marker, runtime: 'nodejs20', handler: 'index.handler', code: { zipFile: archive.toString('base64') },
     cpu: 0.1, memorySize: 256, timeout: 60, instanceConcurrency: 1, diskSize: 512, internetAccess: true, role: `acs:ram::${profile.accountId}:role/${plan.authorizerRole}` };
@@ -107,8 +126,8 @@ export async function bootstrapPlatform(profile, clients, archive, fingerprint) 
   }
   await clients.fc.putConcurrencyConfig(profile.authorizerFunction, new FC.PutConcurrencyConfigRequest({ body: new FC.PutConcurrencyInput({ reservedConcurrency: 1 }) }));
   await clients.fc.putScalingConfig(profile.authorizerFunction, new FC.PutScalingConfigRequest({ qualifier: 'LATEST', body: new FC.PutScalingConfigInput({ minInstances: 0, enableOnDemandScaling: true, horizontalScalingPolicies: [], scheduledPolicies: [] }) }));
-  // Attach a dedicated additive policy: no rewrite of existing project permissions.
-  await ensurePolicy(ram, plan.deploymentPolicyName, plan.deploymentPolicy);
+  // This policy contains the complete deployment scope and does not depend on historical project grants.
+  await ensurePlatformPolicy(ram, plan.deploymentPolicyName, plan.deploymentPolicy, profile.deployerRole);
   await ram.attachPolicyToRole(new RAM.AttachPolicyToRoleRequest({ roleName: profile.deployerRole, policyName: plan.deploymentPolicyName, policyType: 'Custom' }));
   console.log('Platform installed. Verify that the deployment identity cannot update the authorizer or pass its role before accepting projects.');
 }

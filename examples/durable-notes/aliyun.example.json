@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "project": "durable-notes",
+  "project": "pi-aliyun-notes",
   "region": "cn-beijing",
   "accountId": "1234567890123456",
   "frontend": { "bucket": "pi-aliyun-notes-1234567890123456", "dir": "dist", "build": { "cwd": ".", "command": ["node", "build.mjs"] }, "domain": "notes.example.com", "spa": false },
   "backend": { "functionName": "pi-aliyun-notes", "codeDir": "backend", "build": { "cwd": "backend", "command": ["npm", "ci", "--omit=dev", "--ignore-scripts"] }, "domain": "notes-api.example.com", "runtime": "custom.debian10", "command": ["/var/fc/lang/nodejs20/bin/node", "server.mjs"], "cpu": 0.1, "memorySize": 128, "maxInstances": 1, "timeout": 30, "envFrom": { "NOTES_TOKEN": "PI_NOTES_TOKEN" } },
-  "database": { "kind": "tablestore", "instance": "pi-data-ssd", "clusterType": "SSD", "tables": [{ "name": "notes", "primaryKey": [{ "name": "owner", "type": "STRING" }, { "name": "id", "type": "STRING" }] }], "usage": { "storageGB": 0.1, "readCU": 100000, "writeCU": 10000, "internetGB": 0.1 } },
+  "database": { "kind": "tablestore", "clusterType": "SSD", "tables": [{ "name": "notes", "primaryKey": [{ "name": "owner", "type": "STRING" }, { "name": "id", "type": "STRING" }] }], "usage": { "storageGB": 0.1, "readCU": 100000, "writeCU": 10000, "internetGB": 0.1 } },
   "dns": { "zone": "example.com" },
   "tls": { "certFile": ".aliyun/tls/fullchain.pem", "keyFile": ".aliyun/tls/privkey.pem" }
 }

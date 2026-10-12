@@ -1,13 +1,16 @@
 import RAMModule from '@alicloud/ram20150501';
 import { bootstrapDatabaseRole } from './database-role.mjs';
-import { databaseNames } from './database-plan.mjs';
+import { databaseNames, validateDatabaseShared } from './database-plan.mjs';
 import { readFile } from 'node:fs/promises';
 
 // The administrator packs this file; callers cannot supply credentials, policies, trust or endpoints.
 export async function authorize(input, settings, ram) {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['version', 'operation', 'project'].includes(k)) || input.version !== 1 || !['ensure', 'inspect'].includes(input.operation)) throw new Error('Invalid authorization request');
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['version', 'operation', 'project', 'shared'].includes(k)) || input.version !== 2 || !['ensure', 'inspect'].includes(input.operation)) throw new Error('Invalid authorization request');
   if (!/^pi-aliyun-[a-z0-9][a-z0-9-]{0,21}$/.test(input.project || '') || input.project === settings.authorizerFunction) throw new Error('Project is outside the approved namespace');
-  const config = { accountId: settings.accountId, region: settings.region, project: input.project, database: { instance: settings.instance } };
+  const config = { accountId: settings.accountId, region: settings.region, project: input.project, database: { ...(input.shared === undefined ? {} : { shared: input.shared }) } };
+  validateDatabaseShared(config);
+  if (input.shared && (!/^pi-aliyun-[a-z0-9][a-z0-9-]{0,21}$/.test(input.shared.ownerProject) || input.shared.ownerProject === settings.authorizerFunction)) throw new Error('Shared database ownerProject is outside the approved namespace');
+  config.database.instance = databaseNames(config).instanceName;
   const { roleArn } = databaseNames(config);
   if (input.operation === 'inspect') return { status: 'available', roleArn };
   await bootstrapDatabaseRole(ram, config);
@@ -15,7 +18,7 @@ export async function authorize(input, settings, ram) {
 }
 export async function handler(event, context) {
   try {
-    if (event.length > 1024) throw new Error('Request too large');
+    if (event.length > 4096) throw new Error('Request too large');
     const settings = JSON.parse(await readFile(new URL('./settings.json', import.meta.url), 'utf8'));
     if (String(context.accountId) !== settings.accountId || context.region !== settings.region || context.function.name !== settings.authorizerFunction) throw new Error('Authorizer environment mismatch');
     const keys = context.credentials;

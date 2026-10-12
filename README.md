@@ -2,7 +2,7 @@
 
 供 [Pi](https://pi.dev/) 使用的独立能力包：将静态前端部署到阿里云 OSS，将普通 HTTP 后端部署到 FC，并管理 AliDNS、HTTPS 自动签发/续期及低成本 Tablestore 数据库。
 
-包内包含原生 `aliyun` skill、配置模板和可独立运行的 Node CLI，不依赖宿主应用，也不绑定前后端框架。
+包内包含原生 `aliyun` skill、配置模板和可独立运行的 Node CLI，不依赖宿主应用，也不绑定前后端框架。一次配置部署身份和权限后，每个应用默认拥有自己的 Bucket、FC 函数、数据库实例、运行角色及部署配置；只有明确声明的业务关系才共享资源。账号、主域名和部署工具可以共用，应用不默认依赖彼此。
 
 从[云端回声](examples/hello-cloud/README.md)开始可跑通无数据库部署；[文字计量台](examples/text-inspector/README.md)验证跨项目部署；[云端便笺](examples/durable-notes/README.md)验证持久化和重复发布后数据保留。
 
@@ -50,8 +50,8 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - `policy` 输出供管理员审核的跨项目 RAM 策略，不会自行修改授权。
 - `schedule` 将项目配置登记到持久的续期清单；`renew-all` 检查清单内所有项目。
 - `db-plan` 输出数据库、运行角色、完整权限增量及费用估算；`db-inspect` 只读检查当前资源并合并报告问题。
-- `db-approve --fingerprint ...` 记录已获得的用户确认；`db-setup` 创建/检查数据库，`deploy` 也会执行这一步。
-- `db-role` 是没有平台配置时的独立管理员入口；已安装平台的 `deploy` 会调用受控授权函数初始化项目角色。
+- `db-setup` 创建/检查应用独立数据库，`deploy` 也会执行这一步；没有逐项目指纹审批文件。
+- `db-role` 是没有平台配置时的独立管理员入口；已安装平台的 `deploy` 会调用受控授权函数创建或更新应用运行角色。
 - `platform` 查看当前环境的平台配置；`project-init --project pi-aliyun-name` 在独立持久目录创建项目配置。
 
 [配置模板](skills/aliyun/assets/aliyun.example.json) 使用静态前端和已打包的 Node HTTP 后端作为示例，按实际项目调整：
@@ -83,7 +83,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 
 通过 Client Pi 使用时，凭据要放在运行 Client Pi 的服务进程环境或该服务用户可读的 SDK 凭据文件中；放在浏览器所在电脑的环境变量里不会传给服务器上的部署进程。实例 RAM 角色也绑定到实际执行部署的云主机。
 
-尽量将 RAM 身份的权限限制到本项目资源。OSS 可指定专用 Bucket，AliDNS 可指定域名区域；部分 FC 接口只支持账号级资源授权，不能仅凭函数名就认为已隔离权限。实例角色也不是 Agent 级隔离，同机有权访问实例元数据的进程可能取得相同权限。按对应官方 RAM 文档限定资源范围，所需操作包括：
+部署身份应一次具备约定应用范围内完整、持续的部署权限，应用运行身份只取得自己的业务权限。OSS 可指定专用 Bucket，AliDNS 可指定域名区域；部分 FC 接口只支持账号级资源授权，不能仅凭函数名就认为已隔离权限。实例角色也不是 Agent 级隔离，同机有权访问实例元数据的进程可能取得相同权限。按对应官方 RAM 文档限定资源范围，所需操作包括：
 
 - STS `GetCallerIdentity`：核对目标账号。
 - OSS：读取/创建 Bucket、读取/写入标签、`PutBucketPublicAccessBlock`、设置 ACL 和静态网站、上传对象、`CreateCnameToken`、`PutCname`。不需要删除对象。
@@ -101,11 +101,10 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "accountId": "1234567890123456",
   "region": "cn-beijing",
   "zone": "example.com",
-  "instance": "pi-data-ssd",
   "projectRoot": "/srv/projects",
   "authorizerFunction": "pi-aliyun-authorizer",
   "deployerRole": "pi-aliyun-deployer",
@@ -113,9 +112,13 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 }
 ```
 
-`projectRoot` 必须是服务用户可写的独立持久目录；不要选择临时聊天目录或包安装目录。此配置不含密钥，不代表用户已批准所有未来费用。`project-init` 根据它生成配置，但仍需完成构建命令、数据库定义和域名冲突检查。ACME 条款同意应沿用用户已批准的范围，不能仅因配置了邮箱就自动同意。
+`projectRoot` 是 `project-init` 默认创建项目的持久目录，应当由服务用户拥有；已有项目可放在其它持久目录，不要求搬进它。不要把源码和配置放在临时聊天目录、系统临时目录或包安装目录。此配置不含密钥，不代表用户已批准所有未来费用。`project-init` 根据它生成配置，但仍需完成构建命令、数据库定义和域名冲突检查。平台配置 v2 不含共享 `instance`；已有数据需要迁移时单独停写、备份并验证，不能只修改连接地址。ACME 条款同意应沿用用户已批准的范围，不能仅因配置了邮箱就自动同意。
+
+用户确认长期使用范围后，将原意记入可选的 `authorization` 文本字段，包括允许的产品、规格、地域、域名和按量费用范围。Agent 每次读取平台配置即可沿用这份授权，同范围内新建应用不再询问；超出时只确认增量。该字段记录真实授权，不是自动获得授权或限制账单的开关。
 
 管理员首次安装：
+
+`deployerRole` 是配置凭据时选定且已存在的执行身份，例如 ECS 实例角色；平台安装先检查该角色，不猜测它的信任关系或应绑定的机器。
 
 ```sh
 pi-aliyun platform-plan --profile platform.json
@@ -124,15 +127,15 @@ pi-aliyun platform-bundle --profile platform.json --output platform-bundle
 pi-aliyun platform-bootstrap --profile platform.json --bundle platform-bundle --fingerprint <已批准指纹>
 ```
 
-最后一步使用管理员身份的官方 SDK 凭据链。现有 OSS/FC/DNS/证书策略保持原样；另附加 `PiAliyunPlatformDeploy` 策略，不逐项目改写旧策略。它允许在指定实例中管理 `pi_pi_aliyun_*` 表、检查/传递 `pi-db-pi-aliyun-*` 角色，并调用授权函数。实际数据库实例必须预先存在；平台本身不采购新的数据库。
+最后一步使用管理员身份的官方 SDK 凭据链，安装完整的 `PiAliyunPlatformDeploy` 策略：约定名称的网站 Bucket、FC、指定 DNS 主域、HTTPS 证书，以及约定地域的 `pi-app-*` CU 实例和其中的 `pi_pi_aliyun_*` 表。部署身份可以检查并向 FC 传递 `pi-db-pi-aliyun-*` 角色、调用授权函数，无需另找旧策略补齐权限。业务实例在部署应用时按需创建，平台安装本身不提前创建业务数据库。实例名按应用名确定性生成，归属标记须匹配；默认没有跨应用共享实例。
 
-授权函数无 HTTP 触发器，只通过 RAM 签名的 FC API 调用。它接受项目名，固定生成只信任 FC 的角色，以及该项目表前缀的数据行读写策略；拒绝调用方提供账号、策略、信任实体或执行代码。仅授权函数拥有指定前缀的 RAM 创建/绑定能力，且不能更改现有策略版本、删除角色、管理用户/密钥。部署身份被显式拒绝修改授权函数和传递其高权限角色。管理员更新授权函数需要重新审核；升级 Agent 中的包不会自动改动授权函数。
+授权函数无 HTTP 触发器，只通过 RAM 签名的 FC API 调用。它接受项目名和可选的显式共享声明，固定生成只信任 FC 的角色，以及目标实例内对应表前缀的数据行读写策略；拒绝调用方提供账号、策略、信任实体或执行代码。仅授权函数拥有指定前缀的 RAM 创建/绑定及策略版本维护能力；它检查角色、策略的管理描述和绑定，只更新本工具拥有的固定数据策略，拒绝未知归属或额外绑定。版本达到上限时仅删除非默认旧版本，保留当前默认版本供回退；不能删除角色、管理用户或密钥。部署身份被显式拒绝修改授权函数和传递其高权限角色。管理员更新授权函数需要重新审核；升级 Agent 中的包不会自动改动授权函数。
 
 安装后必须用**普通部署身份**验证：调用授权函数成功；更新授权函数被拒绝；把授权函数角色传给业务函数被拒绝；两个项目运行角色不能读对方的表。若云端保护未生效，不得接受平台安装完成，应由管理员修正后再开放。函数资源级授权参见 [FC 权限表](https://help.aliyun.com/en/functioncompute/policies-and-sample-policies)。
 
-授权函数默认 0.1 vCPU、256 MiB、最多 1 实例、最低 0、并发 1、60 秒超时，无定时调用、日志服务或保活。只有项目角色需初始化时调用，普通更新检查现有角色后跳过它。FC 对有调用的小时设最低计费，费用按实际用量计算，见 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)。RAM 策略范围不是消费硬上限。
+授权函数默认 0.1 vCPU、256 MiB、最多 1 实例、最低 0、并发 1、60 秒超时，无定时调用、日志服务或保活。只有应用角色缺失或固定数据策略需要更新时调用，普通更新检查现有角色后跳过它。FC 对有调用的小时设最低计费，费用按实际用量计算，见 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)。RAM 策略范围不是消费硬上限。
 
-后续项目流程为 `project-init` → 开发和构建 → 一次新费用确认 → `db-approve` → `deploy` → 真实读写与重发版验证 → `schedule`。范围内的新项目不再人工创建角色或复制 RAM JSON。更换账号、地域、数据库种类或扩大资源权限时，先重新审核平台范围。同一部署身份能管理多个项目；单个项目的运行角色只读写自己的表，这不等于不同 Agent 的部署身份隔离。
+后续项目流程为 `project-init` → 开发和构建 → 核对已有授权和费用范围 → `deploy` → 真实读写与重发版验证 → `schedule`。范围内的新项目不再人工创建角色、复制 RAM JSON 或保存逐项目审批文件。用户已批准持续部署和相应用量费用时直接继续；真正新增费用、服务条款或超出权限范围时，把具体资源、费用假设及完整权限增量一次列清楚。CLI 可执行不等于用户已批准消费。更换账号、地域、数据库种类或扩大资源权限时，先重新审核平台范围。同一部署身份能管理多个项目；单个项目的运行角色只读写自己的表，这不等于不同 Agent 的部署身份隔离。
 
 前端 Bucket 只放可公开的网站文件。OSS 新建 Bucket 默认阻止公共访问，部署会关闭本项目专用 Bucket 的这一开关，再设置公共读；不会修改账号级开关。如果账号级策略阻止公共访问，部署会失败，需要管理员按实际网站托管需求处理。参见 [OSS 静态网站托管](https://help.aliyun.com/zh/oss/user-guide/hosting-static-websites)。
 
@@ -200,7 +203,7 @@ FC 使用一个函数的 `LATEST` 版本，将最小实例数设为 0、设置�
 
 DNS 在每个配置的域名下管理一条默认线路 CNAME。已有单条 CNAME 可以更新为目标地址，其它记录类型或多条线路会使部署停止。FC 尚未识别新 CNAME 或 OSS 尚未识别验证 TXT 时，工具会等待并重试最多约两分钟；其它错误立即报告。发布按顺序执行，不是事务。失败后可能已有部分资源更新，修复原因再重试；工具没有自动破坏性回滚或资源删除命令。成功输出表示云 API 操作完成，不代表 DNS 已全面传播或业务正常，交付前检查实际访问地址和一个 API/健康接口。
 
-数据库先选能满足业务的低成本方案；确认后自动创建 Tablestore CU 实例和表、验证结构并配置 FC，重复发布保留数据。现有 SQL 连接使用 `backend.envFrom`；此版不自动下单 RDS 或执行 SQL 迁移，详见[数据库流程](skills/aliyun/references/database.md)。FC 磁盘是临时的。包不提供登录系统、任务队列、运行监控或费用硬上限。实例配额限制并行资源，不限制累计消费。FC 对有调用的函数小时存在最低计费，避免保活请求；估算时检查[FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)、OSS 流量、数据库及证书条款。
+数据库先选能满足业务的低成本方案，在已有费用及权限授权范围内自动创建应用独立的 Tablestore CU 实例和表、验证结构并配置 FC，重复发布保留数据。仅在明确声明 `database.shared.ownerProject` 和 `reason` 时使用该应用拥有的实例和表。现有 SQL 连接使用 `backend.envFrom`，也须明确资源独立或共享关系；此版不自动下单 RDS 或执行 SQL 迁移，详见[数据库流程](skills/aliyun/references/database.md)。FC 磁盘是临时的。当前自动部署范围是静态 OSS 前端、FC HTTP 后端、AliDNS/HTTPS 和 Tablestore，不代表支持阿里云全部产品。包不提供登录系统、任务队列、运行监控或费用硬上限。实例配额限制并行资源，不限制累计消费。FC 对有调用的函数小时存在最低计费，避免保活请求；估算时检查[FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)、OSS 流量、数据库及证书条款。
 
 ## 实现依据
 

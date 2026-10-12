@@ -52,6 +52,7 @@ export async function ensureCname(dns, config, domain, target) {
   if (records.some((item) => item.type !== 'CNAME' || item.line !== 'default') || records.length > 1) throw new Error(`DNS ${domain} has conflicting records; resolve them before deployment`);
   const record = records[0];
   if (record?.status === 'DISABLE') throw new Error(`DNS ${domain} is disabled; enable the intended record before deployment`);
+  if (record && record.value.replace(/\.$/, '') !== target) throw new Error(`DNS ${domain} points to another resource; resolve the ownership conflict before deployment`);
   if (record && record.value.replace(/\.$/, '') === target && record.TTL === config.dns.ttl) return;
   const values = { RR, type: 'CNAME', value: target, TTL: config.dns.ttl, line: 'default' };
   if (record) await dns.updateDomainRecord(new DNS.UpdateDomainRecordRequest({ ...values, recordId: record.recordId }));

@@ -3,20 +3,20 @@ import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, doctor, plan } from './config.mjs';
-import { databasePlan, approveDatabase, requireDatabaseApproval } from './database-plan.mjs';
+import { databasePlan } from './database-plan.mjs';
 import { loadPlatform, platformPlan, initProject, checkPlatformProject, checkPersistentProject, ensureProjectRole } from './platform.mjs';
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('pi-aliyun <init|doctor|plan|policy|build|deploy|renew|db-plan|db-inspect|db-setup|db-role> [--config aliyun.json]\npi-aliyun db-approve --fingerprint <approved db-plan fingerprint> [--config aliyun.json]\npi-aliyun <platform|platform-plan> [--profile path]\npi-aliyun project-init --project pi-aliyun-name [--profile path]\npi-aliyun platform-bundle --output directory [--profile path]\npi-aliyun platform-bootstrap --bundle directory --fingerprint approved-hash [--profile path]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\nPlatform bootstrap is an administrator operation. Normal deployment only invokes the protected, fixed-template authorizer.');
+    console.log('pi-aliyun <init|doctor|plan|policy|build|deploy|renew|db-plan|db-inspect|db-setup|db-role> [--config aliyun.json]\npi-aliyun <platform|platform-plan> [--profile path]\npi-aliyun project-init --project pi-aliyun-name [--profile path]\npi-aliyun platform-bundle --output directory [--profile path]\npi-aliyun platform-bootstrap --bundle directory --fingerprint approved-hash [--profile path]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\nAuthorize the deployment environment once. Applications own independent resources unless sharing is explicit. Cloud access does not itself authorize new costs.');
     return;
   }
   const platformCommands = { platform: ['profile'], 'platform-plan': ['profile'], 'platform-bundle': ['profile', 'output'], 'platform-bootstrap': ['profile', 'bundle', 'fingerprint'], 'project-init': ['profile', 'project'] };
   const allowed = platformCommands[command] || (['schedule', 'renew-all', 'install-renewal'].includes(command)
     ? { schedule: ['config', 'registry'], 'renew-all': ['registry'], 'install-renewal': ['user', 'registry'] }[command]
-    : command === 'db-approve' ? ['config', 'fingerprint'] : ['config']);
-  if (!platformCommands[command] && !['init', 'doctor', 'plan', 'policy', 'build', 'deploy', 'renew', 'schedule', 'renew-all', 'install-renewal', 'db-plan', 'db-inspect', 'db-approve', 'db-setup', 'db-role'].includes(command)) throw new Error('Unknown command; use --help');
+    : ['config']);
+  if (!platformCommands[command] && !['init', 'doctor', 'plan', 'policy', 'build', 'deploy', 'renew', 'schedule', 'renew-all', 'install-renewal', 'db-plan', 'db-inspect', 'db-setup', 'db-role'].includes(command)) throw new Error('Unknown command; use --help');
   const options = {};
   for (let i = 0; i < args.length; i += 2) {
     const name = args[i].slice(2);
@@ -76,13 +76,11 @@ async function main() {
   if (command === 'doctor') { console.log((await doctor(config)).join('\n')); return; }
   if (command === 'plan') { console.log(JSON.stringify(plan(config), null, 2)); return; }
   if (command === 'db-plan') { console.log(JSON.stringify(databasePlan(config), null, 2)); return; }
-  if (command === 'db-approve') { await approveDatabase(config, path, options.fingerprint); return; }
   if (command === 'policy') {
     const { deploymentPolicy } = await import('./policy.mjs');
     console.log(JSON.stringify(deploymentPolicy(config), null, 2)); return;
   }
   const { createClients, ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBackendDomain } = await import('./cloud.mjs');
-  if (['deploy', 'db-setup', 'db-role'].includes(command)) await requireDatabaseApproval(config, path);
   if (['db-inspect', 'db-setup', 'db-role'].includes(command)) {
     if (!config.database) throw new Error('Configure database first');
     const { createDatabaseClients, inspectDatabase, provisionDatabase, bootstrapDatabaseRole } = await import('./database.mjs');
@@ -135,6 +133,12 @@ async function main() {
     await deployFrontend(clients.oss, config, artifacts.frontendFiles, tls, { dns: clients.dns });
     await ensureCname(clients.dns, config, config.frontend.domain, `${config.frontend.bucket}.oss-${config.region}.aliyuncs.com`);
     console.log(`Frontend published: https://${config.frontend.domain}`);
+  }
+  const { saveResources } = await import('./resources.mjs');
+  await saveResources(config, path);
+  if (platform && config.tls.acme?.agreeToTerms) {
+    const { registerRenewal } = await import('./renewal.mjs');
+    await registerRenewal(path);
   }
   console.log('Cloud configuration and uploads completed. DNS propagation and application health still require verification.');
 }

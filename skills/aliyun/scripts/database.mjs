@@ -9,7 +9,6 @@ import { databaseAccess, databaseEnvironment, databaseNames } from './database-p
 import { createTablestoreClient } from '../assets/tablestore-runtime.mjs';
 
 const Client = (module) => module.default || module;
-const marker = 'Managed by pi-aliyun databases';
 const invoke = (client, action, params) => new Promise((resolve, reject) => client[action](params, (error, data) => error ? reject(error) : resolve(data)));
 export function createDatabaseClients(config, credential) {
   return {
@@ -33,7 +32,7 @@ async function instanceInfo(control, config) {
     if (response.body?.instances?.some((item) => item.instanceName === config.database.instance)) {
       const { body } = await control.getInstance(new OTS.GetInstanceRequest({ instanceName: config.database.instance }));
       if (body?.userId !== config.accountId || body.regionId !== config.region) throw new Error('Tablestore account or region mismatch');
-      if (body.instanceDescription !== marker) throw new Error('Existing Tablestore instance is not managed by pi-aliyun; choose a new dedicated instance');
+      if (body.instanceDescription !== databaseNames(config).instanceDescription) throw new Error('Existing Tablestore instance belongs to a different application or the legacy shared platform; declare the owner explicitly or migrate to a dedicated instance');
       if (body.instanceSpecification !== config.database.clusterType || body.paymentType !== 'PayAsYouGo' || Number(body.VCUQuota || 0) > 0) throw new Error('Tablestore instance is not the approved CU billing/type configuration');
       if (body.instanceStatus !== 'normal') throw new Error('Tablestore instance is not available; check its status before retrying');
       return body;
@@ -99,7 +98,7 @@ export async function provisionDatabase(clients, config, { wait = () => delay(30
     else if (current.tableStatus !== 1) throw new Error(`Table ${input.tableMeta.tableName} is not active; retry after initialization or resolve its status`);
   }
   if (!exists) {
-    const created = await clients.control.createInstance(new OTS.CreateInstanceRequest({ instanceName: config.database.instance, clusterType: config.database.clusterType, instanceDescription: marker,
+    const created = await clients.control.createInstance(new OTS.CreateInstanceRequest({ instanceName: config.database.instance, clusterType: config.database.clusterType, instanceDescription: databaseNames(config).instanceDescription,
       networkTypeACL: ['INTERNET', 'VPC'], networkSourceACL: [] }));
     if (created?.body?.code && String(created.body.code) !== '200') throw Object.assign(new Error('Tablestore instance creation failed'), { code: created.body.code, data: {} });
     let ready;

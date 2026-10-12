@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 
 const fail = (message) => { throw new Error(message); };
 function fields(value, allowed, label) {
@@ -14,19 +12,34 @@ const canonical = (value) => JSON.stringify(value, function (_key, item) {
 export function databaseNames(config) {
   const suffix = `${config.project.slice(0, 32)}-${hash(config.project).slice(0, 8)}`;
   const roleName = `pi-db-${suffix}`;
-  const prefix = `pi_${suffix.replaceAll('-', '_')}_`;
-  return { roleName, policyName: `PiDatabase-${suffix}`, prefix, roleArn: `acs:ram::${config.accountId}:role/${roleName}` };
+  const ownerProject = config.database?.shared?.ownerProject || config.project;
+  const ownerSuffix = `${ownerProject.slice(0, 32)}-${hash(ownerProject).slice(0, 8)}`;
+  const prefix = `pi_${ownerSuffix.replaceAll('-', '_')}_`;
+  return { ownerProject, instanceName: `pi-app-${hash(ownerProject).slice(0, 8)}`, instanceDescription: `Managed by pi-aliyun application: ${ownerProject}`,
+    roleName, policyName: `PiDatabase-${suffix}`, prefix, roleArn: `acs:ram::${config.accountId}:role/${roleName}` };
+}
+
+export function validateDatabaseShared(config) {
+  const shared = config.database?.shared;
+  if (shared !== undefined) {
+    fields(shared, ['ownerProject', 'reason'], 'database.shared');
+    if (!/^[a-z][a-z0-9-]{0,62}$/.test(shared.ownerProject || '')) fail('database.shared.ownerProject must name the application that owns the shared database');
+    if (shared.ownerProject === config.project) fail('database.shared.ownerProject must name another application; omit shared for an independent database');
+    if (typeof shared.reason !== 'string' || !shared.reason.trim() || shared.reason.length > 500) fail('database.shared.reason must describe the explicit reason for sharing in 1–500 characters');
+  }
+  return shared;
 }
 
 export function validateDatabase(config) {
   const d = config.database;
   if (!d) return;
   if (!config.backend) fail('database requires a backend');
-  fields(d, ['kind', 'instance', 'clusterType', 'tables', 'usage'], 'database');
+  fields(d, ['kind', 'instance', 'clusterType', 'tables', 'usage', 'shared'], 'database');
   if (d.kind !== 'tablestore') fail('Managed database.kind must be tablestore; use backend.envFrom for an existing SQL connection and review a separate RDS purchase when SQL is required');
   d.clusterType ??= 'SSD';
   if (!['SSD', 'HYBRID'].includes(d.clusterType)) fail('database.clusterType must be SSD or HYBRID (CU billing only)');
-  d.instance ??= d.clusterType === 'SSD' ? 'pi-data-ssd' : 'pi-data-hdd';
+  validateDatabaseShared(config);
+  d.instance ??= databaseNames(config).instanceName;
   if (!/^[a-z][a-z0-9-]{1,14}[a-z0-9]$/.test(d.instance) || /ali|ay|ots|taobao|admin/.test(d.instance)) fail('database.instance must satisfy Tablestore naming rules: 3–16 characters, no reserved words');
   if (!Array.isArray(d.tables) || d.tables.length < 1 || d.tables.length > 64) fail('database.tables must declare 1–64 tables');
   const names = new Set();
@@ -75,7 +88,7 @@ export function databaseAccess(config) {
     ...names,
     trustPolicy: { Version: '1', Statement: [{ Effect: 'Allow', Action: ['sts:AssumeRole'], Principal: { Service: ['fc.aliyuncs.com'] } }] },
     runtimePolicy: { Version: '1', Statement: [allow(['ots:GetRow', 'ots:PutRow', 'ots:UpdateRow', 'ots:DeleteRow', 'ots:GetRange', 'ots:BatchGetRow', 'ots:BatchWriteRow'], tables)] },
-    administratorSetup: 'Create the named role and custom policy, attach only that policy to the role. db-role automates this with a separately authorized administrator identity. Never give the regular deployment role RAM policy-management privileges.',
+    administratorSetup: 'The configured deployment identity or platform authorizer creates and updates this application-owned role and fixed data policy. Only this policy may be attached to the role.',
     deploymentStatements: [
       allow(['ots:ListInstance'], `acs:ots:${config.region}:${config.accountId}:instance/*`),
       allow(['ots:GetInstance', 'ots:InsertInstance'], instance),
@@ -99,10 +112,13 @@ export function databasePlan(config) {
   const access = databaseAccess(config);
   const value = {
     accountId: config.accountId, region: config.region, project: config.project, functionName: config.backend.functionName,
-    kind: d.kind, instance: d.instance, clusterType: d.clusterType, billing: 'CU / PayAsYouGo',
+    kind: d.kind, instance: d.instance, ownerProject: access.ownerProject, ownership: d.shared ? 'explicitly-shared' : 'application', shared: d.shared || null,
+    clusterType: d.clusterType, billing: 'CU / PayAsYouGo',
     network: 'Authenticated HTTPS public endpoint, RAM-authorized requests only; no anonymous data access. No VPC/NAT is created. Public downlink is included in the estimate.',
     tables: d.tables.map((table) => ({ ...table, physicalName: access.prefix + table.name, reservedRead: 0, reservedWrite: 0, timeToLive: -1, maxVersions: 1 })),
-    action: 'Create the managed shared instance if absent, create project-prefixed tables if absent; verify existing schemas; never delete or migrate data',
+    action: d.shared
+      ? 'Use the explicitly declared owner application instance and table prefix; verify ownership and schemas; never delete or implicitly migrate data'
+      : 'Create this application-owned instance and tables if absent; verify ownership and existing schemas; never delete or implicitly migrate data',
     environment: databaseEnvironment(config), access,
     cost: {
       currency: 'CNY', checkedOn: '2026-10-12', source: 'https://www.aliyun.com/price/product#/ots/detail/otsbag', rates, usage: u,
@@ -112,21 +128,4 @@ export function databasePlan(config) {
     },
   };
   return { ...value, fingerprint: hash(canonical(value)) };
-}
-
-const approvalPath = (path) => join(dirname(path), '.aliyun', 'database-approval.json');
-export async function approveDatabase(config, path, fingerprint) {
-  const proposal = databasePlan(config);
-  if (!config.database || fingerprint !== proposal.fingerprint) fail('Pass the exact db-plan fingerprint only after the user approves its costs and permissions');
-  const file = approvalPath(path);
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  await writeFile(file, JSON.stringify({ fingerprint, approvedAt: new Date().toISOString(), proposal }, null, 2) + '\n', { mode: 0o600 });
-  await chmod(file, 0o600);
-  console.log('Recorded the supplied database approval for this exact plan. This file is an operator acknowledgement, not a cloud spending cap.');
-}
-export async function requireDatabaseApproval(config, path) {
-  if (!config.database) return;
-  let receipt;
-  try { receipt = JSON.parse(await readFile(approvalPath(path), 'utf8')); } catch { /* Report a single actionable message below. */ }
-  if (receipt?.fingerprint !== databasePlan(config).fingerprint) fail('Database plan is new or changed. Review db-plan, obtain user approval for costs/permissions, then run db-approve --fingerprint <approved fingerprint>. No cloud writes were started.');
 }

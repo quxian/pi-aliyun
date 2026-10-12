@@ -13,6 +13,7 @@ import { ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBac
 import { uploadPrivateKey } from '../skills/aliyun/scripts/tls.mjs';
 import { deploymentPolicy } from '../skills/aliyun/scripts/policy.mjs';
 import { registerRenewal, renewRegistered, renewalUnits } from '../skills/aliyun/scripts/renewal.mjs';
+import { resourceManifest, saveResources } from '../skills/aliyun/scripts/resources.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temp = await mkdtemp(join(tmpdir(), 'pi-aliyun-smoke-'));
@@ -40,6 +41,15 @@ try {
   await writeFile(join(temp, 'static/.env'), 'must-not-upload');
   await writeFile(join(temp, 'server/server.mjs'), 'console.log("server")');
   const config = validateConfig(raw, temp);
+  const manifest = resourceManifest(config);
+  assert.equal(manifest.frontend.bucket, config.frontend.bucket);
+  assert.equal(manifest.backend.functionName, config.backend.functionName);
+  assert(!JSON.stringify(manifest).includes('PI_ALIYUN_SMOKE_DATABASE'));
+  await saveResources(config, join(temp, 'aliyun.json'));
+  const savedManifest = JSON.parse(await readFile(join(temp, '.aliyun/resources.json'), 'utf8'));
+  assert(savedManifest.deployedAt);
+  assert.equal(savedManifest.project, config.project);
+  assert(!JSON.stringify(savedManifest).includes('not-a-real-database-secret'));
   assert.equal(config.frontend.dir, join(temp, 'static'));
   assert.equal(config.backend.runtime, 'custom.debian10');
   assert(!JSON.stringify(plan(config)).includes('not-a-real-database-secret'));
@@ -104,7 +114,10 @@ try {
   await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
   await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
   assert.equal(dnsWrites, 1);
-  await ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com');
+  await assert.rejects(ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com'), /another resource/);
+  assert.equal(dnsWrites, 1);
+  records[0].TTL = config.dns.ttl + 60;
+  await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
   assert.equal(dnsWrites, 2);
   records.push({ RR: 'app', type: 'TXT', line: 'default' });
   await assert.rejects(ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com'), /conflicting/);

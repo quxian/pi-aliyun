@@ -15,6 +15,14 @@ export function validateCertificate(certificate, privateKey, domains, remainingD
   return Date.parse(leaf.validTo) > Date.now() + remainingDays * 86_400_000
 }
 
+export function uploadPrivateKey(privateKey) {
+  const key = createPrivateKey(privateKey)
+  // FC rejects PKCS#8 RSA keys produced by acme.crypto; preserve the key and change only its encoding.
+  return key.asymmetricKeyType === 'rsa'
+    ? key.export({ type: 'pkcs1', format: 'pem' }).toString()
+    : privateKey.toString()
+}
+
 async function readOptional(path) {
   try { return await readFile(path, 'utf8') } catch (error) {
     if (error.code === 'ENOENT') return undefined
@@ -84,7 +92,7 @@ async function issueCertificate(config, domains, existingKey) {
     })
     if (!validateCertificate(certificate, privateKey, domains)) throw new Error('ACME 返回了过期证书。')
     await writePrivate(config.tls.certFile, certificate)
-    return { certificate, privateKey: privateKey.toString() }
+    return { certificate, privateKey: uploadPrivateKey(privateKey) }
   } finally {
     // Delete only record IDs created by this invocation; unrelated TXT records must survive.
     for (const [url, recordId] of created) {
@@ -109,7 +117,7 @@ export async function prepareTls(config) {
   if (certificate && privateKey) {
     const valid = validateCertificate(certificate, privateKey, settings ? [] : domains, settings ? days : 0)
     const coversDomains = domains.every((domain) => new X509Certificate(certificate).checkHost(domain))
-    if (valid && coversDomains) return { certificate, privateKey }
+    if (valid && coversDomains) return { certificate, privateKey: uploadPrivateKey(privateKey) }
     if (!settings) throw new Error('TLS 证书已过期，请替换证书文件或配置 ACME 续期。')
   } else if (!settings) {
     throw new Error('找不到 TLS 证书或私钥，请提供证书文件或配置 ACME。')

@@ -4,15 +4,24 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createPublicKey, sign, verify } from 'node:crypto';
+import acme from 'acme-client';
 import * as FC from '@alicloud/fc20230330';
 import { validateConfig, plan } from '../skills/aliyun/scripts/config.mjs';
 import { collectFiles, createArchive, buildArtifacts } from '../skills/aliyun/scripts/artifacts.mjs';
 import { ensureCname, deployFrontend, deployBackend, bindBackendDomain, cacheControl, websiteXml, functionInput } from '../skills/aliyun/scripts/cloud.mjs';
+import { uploadPrivateKey } from '../skills/aliyun/scripts/tls.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temp = await mkdtemp(join(tmpdir(), 'pi-aliyun-smoke-'));
 const missing = (code) => Object.assign(new Error('not found'), { code });
 try {
+  const acmeKey = await acme.crypto.createPrivateKey();
+  const cloudKey = uploadPrivateKey(acmeKey);
+  assert.match(cloudKey, /^-----BEGIN RSA PRIVATE KEY-----/);
+  const challenge = Buffer.from('FC certificate key encoding regression');
+  assert(verify('sha256', challenge, createPublicKey(acmeKey), sign('sha256', challenge, cloudKey)));
+  assert.equal(uploadPrivateKey(cloudKey), cloudKey);
   const cli = join(root, 'skills/aliyun/scripts/cli.mjs');
   const run = (command) => execFileSync(process.execPath, [cli, command], { cwd: temp, encoding: 'utf8', env: { ...process.env, ALIBABA_CLOUD_ACCESS_KEY_ID: 'smoke-do-not-use', ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'smoke-secret-do-not-print', ALIBABA_CLOUD_CREDENTIALS_URI: 'https://invalid.invalid' } });
   run('init');

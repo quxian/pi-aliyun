@@ -1,8 +1,8 @@
 # pi-aliyun
 
-供 [Pi](https://pi.dev/) 使用的阿里云部署能力包。把静态前端发布到 OSS、HTTP 后端发布到 FC，自动配置域名、HTTPS 和按业务选择的低成本数据库。
+供 [Pi](https://pi.dev/) 使用的阿里云应用部署与维护能力包，也可独立使用 CLI。当前自动管理静态前端 OSS、HTTP 后端 FC、AliDNS、HTTPS 和 Tablestore；按业务需要启用。关系型数据库可接入已有连接，创建实例和管理 Schema 需另行实现对应产品流程。
 
-**安装一次、配置账号授权一次，然后直接部署应用。** 每个应用默认拥有自己的 Bucket、函数、数据库实例和运行角色；只有明确要求时才共享。包、账号配置和业务项目各自独立，不依赖 Client Pi 源码或特定前后端框架。
+**安装一次、配置账号授权一次，然后在批准范围内直接部署应用。** 先判断应用需要什么，再创建归该应用独立所有的资源，更新时复用。纯静态网站无需函数和数据库，纯计算 API 无需数据库或数据访问角色。共享资源需有明确需求；包、账号配置和业务项目各自独立。
 
 ## 安装
 
@@ -10,11 +10,15 @@
 pi install git:github.com/quxian/pi-aliyun
 ```
 
-重新加载 Pi 资源或开始新会话，使用 `/skill:aliyun`。Client Pi 可在「Agent 页面 → 能力包」填入 `https://github.com/quxian/pi-aliyun.git`；这是安装入口，不是运行依赖。
+重新加载 Pi 资源或开始新会话，使用 `/skill:aliyun`。
 
-GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统用户**配置 Git SSH 密钥或 HTTPS credential helper，再安装仓库地址。Client Pi 接受例如 `git@gitee.com:owner/pi-aliyun.git`。不要将 Token 或密码放进仓库 URL、聊天或项目配置；浏览器登录 GitHub 不会为服务器配置 Git 认证。
+GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统用户**配置 Git SSH 密钥或 HTTPS credential helper，再安装仓库地址。不要将 Token 或密码放进仓库 URL、聊天或项目配置；浏览器登录 GitHub 不会为服务器配置 Git 认证。
 
 也可克隆仓库后运行 `npm ci`，再使用 `node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs`。下文简写为 `pi-aliyun`。需要 Node.js 22 或以上；`npm run check` 做本地冒烟检查，不创建云资源。
+
+### 可选：通过 Client Pi 安装
+
+在「Agent 页面 → 能力包」填入 `https://github.com/quxian/pi-aliyun.git`，也支持已配置 Git 认证的私有仓库地址，如 `git@gitee.com:owner/pi-aliyun.git`。Client Pi 提供安装入口，本包独立于其源码和运行服务。
 
 ## 配置账号
 
@@ -58,7 +62,7 @@ pi-aliyun plan
 pi-aliyun deploy
 ```
 
-`init` 是唯一初始化入口，继承账号、地域、域名、低规格默认值和 CA 同意，不生成业务代码。已有项目使用 `init --project pi-aliyun-myapp --config /path/to/project/aliyun.json`；不会覆盖已有配置，已有 `.gitignore` 会保留。每个项目的 `aliyun.json` 使用相对于自身的路径；其它命令通过 `--config` 指向它。
+`init` 是唯一初始化入口，继承账号、地域、域名、低规格默认值和 CA 同意，不生成业务代码。为尚无部署配置的已有项目执行 `init --project pi-aliyun-myapp --config /path/to/project/aliyun.json`；已有 `.gitignore` 会保留。更新应用直接复用已有配置，`init` 会拒绝覆盖它。每个项目的 `aliyun.json` 使用相对于自身的路径；其它命令通过 `--config` 指向它。
 
 | 配置 | 用途 |
 | --- | --- |
@@ -73,13 +77,13 @@ pi-aliyun deploy
 | `database` | 应用独立数据库、表结构和用量估算，见[数据库说明](skills/aliyun/references/database.md) |
 | `dns`、`tls` | AliDNS 区域、证书或 ACME 签发配置 |
 
-不需要的一端可删除整个配置。前端必须是静态文件或框架的静态导出；后端保留普通 HTTP 服务形态，监听 `0.0.0.0` 和 `PORT`，无需每条路由拆成一个函数。后端及依赖须适配 FC Linux x86_64，不能直接上传本机原生模块；ZIP 上限 60 MiB。参考[无数据库示例](examples/hello-cloud/README.md)和[持久化示例](examples/durable-notes/README.md)。
+模板包含前后端配置，部署前省略不需要的整个 `frontend` 或 `backend`；没有持久化需求就不配置 `database`。接手已有代码时，先核对业务行为与部署形态的适配。前端须为静态文件或框架的静态导出；后端保留普通 HTTP 服务形态，监听 `0.0.0.0` 和 `PORT`。后端及依赖须适配 FC Linux x86_64，不能直接上传本机原生模块；ZIP 上限 60 MiB。参考[无数据库示例](examples/hello-cloud/README.md)和[持久化示例](examples/durable-notes/README.md)。
 
 `deploy` 自动构建、核对账号、准备资源和运行权限、发布代码、配置 DNS/HTTPS，再检查前端 HTTPS 与后端健康接口。非 2xx、证书或连接失败均返回失败，不会把上传成功等同于上线成功。最后由 Agent 验收真实业务；有持久化时验证鉴权读写与重新发布后数据保留。普通更新只验证受影响流程。
 
 `doctor` 检查本地配置；`plan` 展示目标资源，不查询实时差异；`build` 只构建；`db-plan` 估算选定数据库的费用；`db-inspect` 只读检查数据库和角色；`db-setup` 单独执行部署已包含的数据库准备。
 
-部署会保存不含秘密的 `.aliyun/resources.json`。重复发布复用本应用资源，归属冲突会停止；不会接管其它应用或删除数据库。共享必须明确声明，详见[数据库说明](skills/aliyun/references/database.md)。
+部署会保存不含秘密的 `.aliyun/resources.json`。重复发布复用本应用资源，归属冲突会停止；不会接管其它应用或删除数据库。同属一个系统或服务互相调用，不自动意味着共享数据库；共享须基于明确的数据共享需求并记录归属，详见[数据库说明](skills/aliyun/references/database.md)。
 
 ## 查看、排障与删除
 
@@ -138,4 +142,4 @@ OSS 网站文件公开读取，部署会关闭应用专用 Bucket 的阻止公�
 
 发布不是云端事务；失败时可能已有部分资源完成，修正原因后重试。函数使用 `LATEST`，最小实例数为 0，部署会替换声明的环境变量。数据库和旧静态文件不会因重复发布被删除。工具不提供用户登录系统、监控告警或费用硬上限；实例配额只限制并发，不限制累计消费。
 
-当前自动创建范围为 OSS、FC、AliDNS/HTTPS 和 Tablestore。关系型数据库可通过 `envFrom` 接入，但本包不自动购买 RDS。不要仅为保持默认方案而强迫业务使用不适合的数据模型。费用依据实际存储、请求和流量，核对 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)及[数据库费用说明](skills/aliyun/references/database.md)。
+费用依据实际存储、请求和流量，核对 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)及[数据库费用说明](skills/aliyun/references/database.md)。数据库选型应保留业务所需的数据语义，超出当前自动化范围时按实际产品落实创建和维护流程。

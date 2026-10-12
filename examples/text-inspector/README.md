@@ -6,9 +6,8 @@
 
 ```sh
 node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy --config aliyun.json
-node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs schedule --config aliyun.json
 ```
 
-已有部署角色覆盖本项目资源、域名已备案且每日续期定时器已经安装时，以上两步完成发布和续期登记，无需打开阿里云控制台。独立项目使用独立资源，不能复用其它项目的名称；遇到权限不足时按实际范围由管理员调整。
+已有部署身份覆盖本项目资源、域名已备案且每日续期定时器已经安装时，`deploy` 完成发布并自动登记配置好的 ACME 续期项目。独立项目使用独立资源；已批准范围内的权限缺失按账号配置问题修复，超出范围时集中确认增量。
 
 本地运行：执行 `node build.mjs`，然后分别启动 `LOCAL_TEXT_ORIGIN=http://127.0.0.1:8080 node dist/backend/server.mjs` 和 `python3 -m http.server 8080 --bind 127.0.0.1 --directory dist/frontend`，打开 `http://127.0.0.1:8080`。构建默认使用本目录 `aliyun.json` 的 API 域名；没有配置时使用 `http://127.0.0.1:9000`，也可通过 `TEXT_API_ORIGIN` 覆盖。

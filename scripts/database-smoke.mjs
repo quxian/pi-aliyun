@@ -81,7 +81,7 @@ try {
   await bootstrapDatabaseRole(ram, config);
   await bootstrapDatabaseRole(ram, config);
   assert.deepEqual(roleWrites, ['role', 'policy', 'attach']);
-  runtimeDocument = JSON.stringify(databaseAccess({ ...config, database: { ...config.database, instance: 'pi-data-ssd' } }).runtimePolicy);
+  runtimeDocument = JSON.stringify(databaseAccess({ ...config, database: { ...config.database, instance: 'pi-app-other' } }).runtimePolicy);
   versions = Array.from({ length: 5 }, (_, index) => ({ versionId: `v${index + 1}`, isDefaultVersion: index === 4, createDate: `2026-01-0${index + 1}` }));
   defaultVersion = 'v5';
   await bootstrapDatabaseRole(ram, config);

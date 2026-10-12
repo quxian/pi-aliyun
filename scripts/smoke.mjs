@@ -205,8 +205,8 @@ try {
   const renewed = [];
   await assert.rejects(renewRegistered(registry, { run: async (path) => { renewed.push(path); if (renewed.length === 1) throw new Error('simulated failure'); } }), /1 certificate/);
   assert.deepEqual(renewed, [join(temp, 'aliyun.json'), otherConfig]);
-  const units = renewalUnits({ user: 'iceberg-client', registryPath: registry });
-  assert.match(units['pi-aliyun-renew.service'], /User=iceberg-client/);
+  const units = renewalUnits({ user: 'deploy-user', registryPath: registry });
+  assert.match(units['pi-aliyun-renew.service'], /User=deploy-user/);
   assert.match(units['pi-aliyun-renew.service'], /renew-all --registry/);
   assert.match(units['pi-aliyun-renew.timer'], /Persistent=true/);
   assert.throws(() => renewalUnits({ user: 'root', registryPath: registry }), /non-root/);

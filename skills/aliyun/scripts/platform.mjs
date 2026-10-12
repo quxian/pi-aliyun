@@ -79,7 +79,7 @@ export async function ensureProjectRole(fc, ram, config, profile) {
   try { await verifyDatabaseRole(ram, config); return; }
   catch { /* The fixed-template authorizer can also finish an interrupted role setup. */ }
   const request = { version: 1, operation: 'ensure', project: config.project };
-  const response = await fc.invokeFunction(profile.authorizerFunction, new FC.InvokeFunctionRequest({ body: Readable.from([JSON.stringify(request)]), qualifier: 'LATEST' }));
+  const response = await fc.invokeFunction(profile.authorizerFunction, new FC.InvokeFunctionRequest({ body: Readable.from([Buffer.from(JSON.stringify(request))]), qualifier: 'LATEST' }));
   const chunks = []; let size = 0;
   for await (const chunk of response.body) { size += Buffer.byteLength(chunk); if (size > 16384) throw new Error('Authorizer response is too large'); chunks.push(Buffer.from(chunk)); }
   const result = JSON.parse(Buffer.concat(chunks).toString());

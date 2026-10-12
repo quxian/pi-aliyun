@@ -61,7 +61,9 @@ try {
   let invokes = 0;
   const fc = { invokeFunction: async (name, request) => {
     invokes++; assert.equal(name, p.authorizerFunction);
-    let body = ''; for await (const b of request.body) body += b;
+    const chunks = []; for await (const b of request.body) chunks.push(b);
+    // The FC SDK concatenates byte chunks before signing the request.
+    const body = Buffer.concat(chunks).toString();
     return { body: Readable.from([JSON.stringify(await authorize(JSON.parse(body), p, ram))]) };
   } };
   await ensureProjectRole(fc, ram, runtime, p);

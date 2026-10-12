@@ -1,3 +1,4 @@
+import { databaseAccess } from './database-plan.mjs';
 // An administrator applies this policy; deployment credentials never receive RAM administration permissions.
 export function deploymentPolicy(config) {
   const account = config.accountId;
@@ -13,5 +14,6 @@ export function deploymentPolicy(config) {
     // These FC operations include APIs that require account-level authorization.
     allow(['fc:GetFunction', 'fc:CreateFunction', 'fc:UpdateFunction', 'fc:PutConcurrencyConfig', 'fc:PutScalingConfig', 'fc:GetTrigger', 'fc:CreateTrigger', 'fc:UpdateTrigger', 'fc:GetCustomDomain', 'fc:CreateCustomDomain', 'fc:UpdateCustomDomain'], '*'),
     allow(['yundun-cert:DescribeSSLCertificatePrivateKey', 'yundun-cert:DescribeSSLCertificatePublicKeyDetail', 'yundun-cert:CreateSSLCertificate'], '*'),
+    ...(config.database ? databaseAccess(config).deploymentStatements : []),
   ] };
 }

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>云端便笺</title>
+<style>body{font:16px/1.6 system-ui;background:#f4f5f0;color:#25352b;max-width:620px;margin:7vh auto;padding:24px}input,textarea,button{font:inherit;box-sizing:border-box;padding:12px;border:1px solid #b6c2b4;border-radius:8px}input,textarea{width:100%;background:white}textarea{min-height:220px;margin:16px 0}button{cursor:pointer;background:#253f31;color:white;margin-right:10px}label{display:block}small{display:block;margin:12px 0;color:#536255}</style>
+<h1>云端便笺</h1><p>保存后，刷新页面或重新部署，内容仍会保留。</p>
+<label>访问口令<input id="token" type="password" autocomplete="off"></label><small>演示使用共享口令；口令仅保留在当前页面内存中。</small>
+<label>便笺内容<textarea id="note" maxlength="1000"></textarea></label>
+<button id="load">读取</button><button id="save">保存</button><p id="status" role="status"></p>
+<script type="module">
+const api='__API_ORIGIN__';
+async function call(method){
+  const status=document.querySelector('#status');status.textContent='处理中…';
+  try{const r=await fetch(api+'/note',{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+document.querySelector('#token').value},...(method==='PUT'?{body:JSON.stringify({text:document.querySelector('#note').value})}:{})});
+    const data=await r.json();if(!r.ok)throw Error(data.error);if(method==='GET')document.querySelector('#note').value=data.text;status.textContent=method==='GET'?'已从云端读取':'已保存到云端';
+  }catch(e){status.textContent=e.message}}
+document.querySelector('#load').onclick=()=>call('GET');document.querySelector('#save').onclick=()=>call('PUT');
+</script></html>

@@ -1,5 +1,6 @@
 import { readFile, access } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
+import { validateDatabase, databasePlan } from './database-plan.mjs';
 
 const fail = (message) => { throw new Error(message); };
 const string = (value, label) => typeof value === 'string' && value.length > 0 || fail(`${label} must be a nonempty string`);
@@ -34,7 +35,7 @@ function stringMap(value, label) {
 
 export function validateConfig(raw, baseDir) {
   const config = structuredClone(raw);
-  keys(config, ['version', 'project', 'region', 'accountId', 'frontend', 'backend', 'dns', 'tls'], 'config');
+  keys(config, ['version', 'project', 'region', 'accountId', 'frontend', 'backend', 'dns', 'tls', 'database'], 'config');
   if (config.version !== 1) fail('config.version must be 1');
   if (!/^[a-z][a-z0-9-]{0,62}$/.test(config.project || '')) fail('project must be a lowercase name');
   if (!/^[a-z]{2}-[a-z0-9-]+$/.test(config.region || '')) fail('region must be an Alibaba Cloud region ID');
@@ -115,6 +116,7 @@ export function validateConfig(raw, baseDir) {
   }
   const paths = [config.tls.certFile, config.tls.keyFile, config.tls.acme?.accountKeyFile].filter(Boolean);
   if (new Set(paths).size !== paths.length) fail('TLS certificate, private key and account key need separate paths');
+  validateDatabase(config);
   return config;
 }
 
@@ -143,6 +145,7 @@ export async function doctor(config) {
   const credentialNames = ['ALIBABA_CLOUD_ACCESS_KEY_ID', 'ALIBABA_CLOUD_ACCESS_KEY_SECRET', 'ALIBABA_CLOUD_SECURITY_TOKEN', 'ALIBABA_CLOUD_ECS_METADATA', 'ALIBABA_CLOUD_ROLE_ARN', 'ALIBABA_CLOUD_OIDC_TOKEN_FILE', 'ALIBABA_CLOUD_CREDENTIALS_URI', 'ALIBABA_CLOUD_CREDENTIALS_FILE'];
   checks.push(`Credential environment names present: ${credentialNames.filter((key) => Object.hasOwn(process.env, key)).join(', ') || 'none; SDK may use its default credential file/instance chain'}`);
   checks.push('Credentials were not resolved; cloud permissions and ownership were not checked');
+  if (config.database) checks.push('Managed database configured; review db-plan and db-inspect, then record user approval before the first deployment');
   if (config.tls.acme) checks.push('ACME configured; deploy/renew may contact CA and temporarily change DNS TXT records');
   else for (const path of [config.tls.certFile, config.tls.keyFile]) await access(path).catch(() => fail('Configured TLS files must exist before deploy'));
   return checks;
@@ -156,6 +159,6 @@ export function plan(config) {
     backend: config.backend ? { functionName: config.backend.functionName, action: 'Create/update LATEST code and declared settings; anonymous HTTP trigger; min instances 0; replace owned domain route', directory: config.backend.codeDir, domain: config.backend.domain, build: Boolean(config.backend.build), cpu: config.backend.cpu, memorySize: config.backend.memorySize, maxInstances: config.backend.maxInstances, environmentNames: [...Object.keys(config.backend.environment), ...Object.keys(config.backend.envFrom)], vpc: Boolean(config.backend.vpcConfig) } : undefined,
     dns: { zone: config.dns.zone, action: 'Create or update one default-line CNAME per domain; create and clean up owned TXT records for OSS domain verification when needed; conflicting record types stop deployment' },
     tls: { mode: config.tls.acme ? 'Reuse valid certificate or ACME DNS-01 issuance/renewal; creates and cleans up its own TXT records' : 'Upload supplied PEM certificate and private key', domains: [config.frontend?.domain, config.backend?.domain].filter(Boolean) },
-    database: 'No database is purchased or changed; backend.envFrom references existing connection variables',
+    database: databasePlan(config),
   };
 }

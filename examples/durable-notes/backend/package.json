@@ -1,0 +1,7 @@
+{
+  "name": "pi-aliyun-durable-notes",
+  "private": true,
+  "type": "module",
+  "dependencies": { "tablestore": "5.6.5" },
+  "overrides": { "protobufjs": "^7.6.5" }
+}

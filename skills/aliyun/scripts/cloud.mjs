@@ -14,7 +14,7 @@ export async function createClients(config, { services = ['dns', 'fc', 'oss'] } 
   try { identity = await sts.getCallerIdentity(); }
   catch { throw new Error('Could not verify Alibaba Cloud credentials with STS GetCallerIdentity; check the SDK credential chain and network'); }
   if (identity.body?.accountId !== config.accountId) throw new Error('Credential account does not match config.accountId; no resources were changed');
-  const clients = {};
+  const clients = { credential };
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
   if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https' });
   if (services.includes('oss') && config.frontend) {

@@ -4,3 +4,6 @@ node_modules/
 .env.*
 *.pem
 *.key
+examples/**/aliyun.json
+examples/**/dist/
+examples/durable-notes/backend/tablestore-runtime.mjs

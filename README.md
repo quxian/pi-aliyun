@@ -1,10 +1,10 @@
 # pi-aliyun
 
-供 [Pi](https://pi.dev/) 使用的独立能力包：将静态前端部署到阿里云 OSS，将普通 HTTP 后端部署到 FC 函数计算，并管理 AliDNS 域名解析、HTTPS 证书上传及可选的 ACME 自动签发与续期。
+供 [Pi](https://pi.dev/) 使用的独立能力包：将静态前端部署到阿里云 OSS，将普通 HTTP 后端部署到 FC，并管理 AliDNS、HTTPS 自动签发/续期及低成本 Tablestore 数据库。
 
 包内包含原生 `aliyun` skill、配置模板和可独立运行的 Node CLI，不依赖宿主应用，也不绑定前后端框架。
 
-想直接跑通前后端部署，可从[云端回声示例](examples/hello-cloud/README.md)开始：静态页面调用普通 Node HTTP 接口，无数据库、无应用运行依赖。另有[文字计量台](examples/text-inspector/README.md)，可用独立资源验证跨项目部署。
+从[云端回声](examples/hello-cloud/README.md)开始可跑通无数据库部署；[文字计量台](examples/text-inspector/README.md)验证跨项目部署；[云端便笺](examples/durable-notes/README.md)验证持久化和重复发布后数据保留。
 
 ## 安装
 
@@ -49,6 +49,9 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 - `renew` 检查或续期证书并上传到现有域名，不重新构建业务代码。
 - `policy` 输出供管理员审核的跨项目 RAM 策略，不会自行修改授权。
 - `schedule` 将项目配置登记到持久的续期清单；`renew-all` 检查清单内所有项目。
+- `db-plan` 输出数据库、运行角色、完整权限增量及费用估算；`db-inspect` 只读检查当前资源并合并报告问题。
+- `db-approve --fingerprint ...` 记录已获得的用户确认；`db-setup` 创建/检查数据库，`deploy` 也会执行这一步。
+- `db-role` 是单独的管理员入口，初始化已确认的运行角色；不会由普通部署自动调用。
 
 [配置模板](skills/aliyun/assets/aliyun.example.json) 使用静态前端和已打包的 Node HTTP 后端作为示例，按实际项目调整：
 
@@ -63,6 +66,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 | `backend.cpu`、`memorySize`、`timeout`、`instanceConcurrency`、`maxInstances` | 资源规格、请求超时、单实例请求并发和实例数配额 |
 | `backend.environment`、`backend.envFrom` | 非敏感固定变量，或“函数环境变量名 → 部署进程环境变量名”的映射 |
 | `backend.role`、`backend.vpcConfig` | 可选的既有运行时 RAM 角色，以及 VPC、交换机、安全组配置 |
+| `database` | 可选的 Tablestore 实例、表主键和月用量估计；生成项目角色名并注入连接变量，详见[数据库流程](skills/aliyun/references/database.md) |
 | `dns.zone`、`dns.ttl` | 当前账号 AliDNS 管理的既有域名区域；只管理子域名默认线路的 CNAME |
 | `tls.certFile`、`tls.keyFile` | 覆盖已配置域名的 PEM 证书链和私钥文件 |
 
@@ -88,7 +92,7 @@ node /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy
 
 工具不会自动授予权限；账号需已开通所使用的云服务。FC 运行时角色与部署身份分开，应用通过运行时角色取得访问云服务的临时凭据。数据库密码等业务秘密使用 `backend.envFrom`，不要把部署凭据转交应用。这些业务值会写入 FC 环境变量，不会打印到 CLI 或保存到生成的本地产物。
 
-同一部署身份要管理多个项目时，可执行 `policy --config aliyun.json > deployment-policy.json`。管理员审核后将策略绑定到部署角色一次，后续符合范围的项目可直接部署。生成的策略将 OSS 限定到本账号的 `pi-aliyun-*-账号ID` 网站 Bucket，AliDNS 限定到配置的 `dns.zone`，FC 和证书操作保留所需账号级授权，不包含 RAM 管理权限。新项目使用不同的项目名、Bucket、函数名和子域名；标签检查能防止误用其它项目资源，但不构成多个 Agent 之间的权限隔离。不同 DNS 区域、额外云产品或函数运行时角色仍需管理员另行授权。
+同一部署身份管理多个项目时，可执行 `policy --config aliyun.json > deployment-policy.json`。管理员审核后绑定到部署角色，范围内的网站可直接部署。OSS 限定到 `pi-aliyun-*-账号ID` 网站 Bucket，AliDNS 限定到 `dns.zone`，FC 和证书保留所需账号级授权，不包含 RAM 管理权。配置数据库会追加该实例和项目表/角色的权限；合并到已有策略时保留其它项目授权。新项目使用不同的资源名和域名；标签防止误用，不构成 Agent 身份隔离。新的数据库运行角色等权限与费用一起确认。
 
 前端 Bucket 只放可公开的网站文件。OSS 新建 Bucket 默认阻止公共访问，部署会关闭本项目专用 Bucket 的这一开关，再设置公共读；不会修改账号级开关。如果账号级策略阻止公共访问，部署会失败，需要管理员按实际网站托管需求处理。参见 [OSS 静态网站托管](https://help.aliyun.com/zh/oss/user-guide/hosting-static-websites)。
 
@@ -156,7 +160,7 @@ FC 使用一个函数的 `LATEST` 版本，将最小实例数设为 0、设置�
 
 DNS 在每个配置的域名下管理一条默认线路 CNAME。已有单条 CNAME 可以更新为目标地址，其它记录类型或多条线路会使部署停止。FC 尚未识别新 CNAME 或 OSS 尚未识别验证 TXT 时，工具会等待并重试最多约两分钟；其它错误立即报告。发布按顺序执行，不是事务。失败后可能已有部分资源更新，修复原因再重试；工具没有自动破坏性回滚或资源删除命令。成功输出表示云 API 操作完成，不代表 DNS 已全面传播或业务正常，交付前检查实际访问地址和一个 API/健康接口。
 
-数据库按需使用，工具不自动购买或执行迁移，详见[数据库选择与连接方式](skills/aliyun/references/database.md)。FC 本地磁盘是临时的。包不提供登录系统、数据库迁移执行器、任务队列、运行监控或费用硬上限。实例配额限制并行资源，不限制累计消费。FC 对有调用的函数小时存在最低计费，避免无必要的保活请求；估算费用时检查[当前 FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)、OSS 流量、数据库与证书条款。
+数据库先选能满足业务的低成本方案；确认后自动创建 Tablestore CU 实例和表、验证结构并配置 FC，重复发布保留数据。现有 SQL 连接使用 `backend.envFrom`；此版不自动下单 RDS 或执行 SQL 迁移，详见[数据库流程](skills/aliyun/references/database.md)。FC 磁盘是临时的。包不提供登录系统、任务队列、运行监控或费用硬上限。实例配额限制并行资源，不限制累计消费。FC 对有调用的函数小时存在最低计费，避免保活请求；估算时检查[FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)、OSS 流量、数据库及证书条款。
 
 ## 实现依据
 

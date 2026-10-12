@@ -80,9 +80,10 @@ export function databaseAccess(config) {
       allow(['ots:ListInstance'], `acs:ots:${config.region}:${config.accountId}:instance/*`),
       allow(['ots:GetInstance', 'ots:InsertInstance'], instance),
       allow(['ots:CreateTable', 'ots:DescribeTable'], tables),
-      allow(['ram:GetRole', 'ram:ListPoliciesForRole'], names.roleArn),
-      allow(['ram:GetPolicy', 'ram:GetPolicyVersion'], `acs:ram::${config.accountId}:policy/${names.policyName}`),
-      { ...allow(['ram:PassRole'], names.roleArn), Condition: { StringEquals: { 'acs:Service': 'fc.aliyuncs.com' } } },
+      // RAM API authorization uses the global '*' region, unlike a role's returned ARN.
+      allow(['ram:GetRole', 'ram:ListPoliciesForRole'], `acs:ram:*:${config.accountId}:role/${names.roleName}`),
+      allow(['ram:GetPolicy', 'ram:GetPolicyVersion'], `acs:ram:*:${config.accountId}:policy/${names.policyName}`),
+      { ...allow(['ram:PassRole'], `acs:ram:*:${config.accountId}:role/${names.roleName}`), Condition: { StringEquals: { 'acs:Service': 'fc.aliyuncs.com' } } },
     ],
   };
 }

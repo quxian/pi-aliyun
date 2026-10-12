@@ -60,7 +60,24 @@ function document(value) {
   if (typeof value !== 'string') throw new Error('RAM returned a missing policy document');
   try { return JSON.parse(value); } catch { return JSON.parse(decodeURIComponent(value)); }
 }
-function policyEqual(actual, expected) { return isDeepStrictEqual(document(actual), expected); }
+function normalizedPolicy(policy) {
+  const list = (value) => Array.isArray(value) ? value : [value];
+  const statements = list(policy.Statement).map((source) => {
+    const statement = { ...source };
+    // The RAM console collapses one-element lists; their authorization meaning is unchanged.
+    for (const key of ['Action', 'NotAction', 'Resource', 'NotResource']) {
+      if (Object.hasOwn(statement, key)) statement[key] = list(statement[key]).sort();
+    }
+    for (const key of ['Principal', 'NotPrincipal']) {
+      if (statement[key] && typeof statement[key] === 'object') {
+        statement[key] = Object.fromEntries(Object.entries(statement[key]).map(([type, value]) => [type, list(value).sort()]));
+      }
+    }
+    return statement;
+  });
+  return { ...policy, Statement: statements };
+}
+function policyEqual(actual, expected) { return isDeepStrictEqual(normalizedPolicy(document(actual)), normalizedPolicy(expected)); }
 export async function verifyDatabaseRole(ram, config) {
   const access = databaseAccess(config);
   const role = (await ram.getRole(new RAM.GetRoleRequest({ roleName: access.roleName }))).body?.role;

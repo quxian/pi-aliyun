@@ -6,7 +6,7 @@ import TableStore from 'tablestore';
 import Proto from 'tablestore/lib/protocol/tablestore_compiled_proto.js';
 import { validateConfig } from '../skills/aliyun/scripts/config.mjs';
 import { databasePlan, databaseAccess, approveDatabase, requireDatabaseApproval, databaseEnvironment } from '../skills/aliyun/scripts/database-plan.mjs';
-import { provisionDatabase, createTableInput, checkTable, inspectDatabase, bootstrapDatabaseRole } from '../skills/aliyun/scripts/database.mjs';
+import { provisionDatabase, createTableInput, checkTable, inspectDatabase, bootstrapDatabaseRole, verifyDatabaseRole } from '../skills/aliyun/scripts/database.mjs';
 import { databaseForRequest } from '../skills/aliyun/assets/tablestore-runtime.mjs';
 
 const temp = await mkdtemp(join(tmpdir(), 'pi-aliyun-db-smoke-'));
@@ -19,6 +19,7 @@ try {
   assert(a.runtimePolicy.Statement.every((s) => s.Resource.every((r) => r.includes(`/table/${a.prefix}`))));
   assert(!JSON.stringify(a.deploymentStatements).includes('ram:Create'));
   assert(!JSON.stringify(a.runtimePolicy).includes('ots:CreateTable'));
+  assert(a.deploymentStatements.filter((s) => s.Action.some((action) => action.startsWith('ram:'))).every((s) => s.Resource.every((r) => r.startsWith(`acs:ram:*:${config.accountId}:`))));
   assert.throws(() => validateConfig({ ...raw, database: { ...raw.database, instance: 'pi-aliyun' } }, temp), /reserved words/);
   assert.throws(() => validateConfig({ ...raw, backend: { ...raw.backend, environment: { TABLESTORE_ENDPOINT: 'https://attacker.invalid' } } }, temp), /conflicting/);
   const path = join(temp, 'aliyun.json');
@@ -59,6 +60,18 @@ try {
   };
   await bootstrapDatabaseRole(ram, config);
   await bootstrapDatabaseRole(ram, config);
+  const consoleTrust = structuredClone(a.trustPolicy);
+  consoleTrust.Statement[0].Action = 'sts:AssumeRole';
+  consoleTrust.Statement[0].Principal.Service = 'fc.aliyuncs.com';
+  const consolePolicy = structuredClone(a.runtimePolicy);
+  consolePolicy.Statement[0].Resource = consolePolicy.Statement[0].Resource[0];
+  const consoleRam = { ...ram,
+    getRole: async () => ({ body: { role: { assumeRolePolicyDocument: JSON.stringify(consoleTrust) } } }),
+    getPolicyVersion: async () => ({ body: { policyVersion: { policyDocument: JSON.stringify(consolePolicy) } } }),
+  };
+  await verifyDatabaseRole(consoleRam, config);
+  consoleTrust.Statement[0].Principal.Service = ['fc.aliyuncs.com', 'ecs.aliyuncs.com'];
+  await assert.rejects(verifyDatabaseRole(consoleRam, config), /trust differs/);
   let exists = false; let tableExists = false; const writes = [];
   const clients = { ram,
     control: {

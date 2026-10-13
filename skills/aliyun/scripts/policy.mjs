@@ -1,7 +1,10 @@
+import { accountZone } from './account.mjs';
+
 // This is a trusted deployment-management identity: RAM resource-name prefixes
 // restrict which policies it can manage, not the permissions those policies grant.
 export function deploymentPolicy(profile) {
-  const { accountId: account, region, zone } = profile;
+  const { accountId: account, region } = profile;
+  const zone = accountZone(profile);
   const buckets = `pi-aliyun-*-${account}`;
   const instances = `acs:ots:${region}:${account}:instance/pi-app-*`;
   const roles = `acs:ram:*:${account}:role/pi-db-pi-aliyun-*`;

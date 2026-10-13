@@ -44,7 +44,7 @@ async function writePrivate(path, value) {
 async function issueCertificate(config, domains, existingKey) {
   const settings = config.tls.acme
   if (settings.agreeToTerms !== true) throw new Error('使用 ACME 前需阅读证书服务条款，并在 tls.acme.agreeToTerms 中确认。')
-  if (!settings.email || !settings.accountKeyFile) throw new Error('ACME 需要 email 和 accountKeyFile。')
+  if (!settings.accountKeyFile) throw new Error('ACME 需要 accountKeyFile。')
   const zone = config.dns?.zone
   if (!zone || domains.some((domain) => domain !== zone && !domain.endsWith(`.${zone}`))) {
     throw new Error('ACME 域名必须属于 dns.zone 配置的阿里云 DNS 区域。')

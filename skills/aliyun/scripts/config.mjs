@@ -104,7 +104,8 @@ export function validateConfig(raw, baseDir) {
   if (config.tls.acme) {
     const a = config.tls.acme;
     keys(a, ['email', 'directoryUrl', 'accountKeyFile', 'renewBeforeDays', 'agreeToTerms', 'proxyUrl'], 'tls.acme');
-    string(a.email, 'tls.acme.email'); string(a.accountKeyFile, 'tls.acme.accountKeyFile');
+    if (a.email !== undefined && (typeof a.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email))) fail('tls.acme.email must be a valid email when supplied');
+    string(a.accountKeyFile, 'tls.acme.accountKeyFile');
     a.accountKeyFile = resolve(baseDir, a.accountKeyFile);
     if (a.directoryUrl && !a.directoryUrl.startsWith('https://')) fail('ACME directoryUrl must use HTTPS');
     if (a.proxyUrl !== undefined) {

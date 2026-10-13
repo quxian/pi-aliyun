@@ -11,7 +11,7 @@ export function validateAccount(value) {
   const keys = ['version', 'accountId', 'region', 'zone', 'projectRoot', 'acmeEmail', 'acmeProxyUrl', 'acmeTermsAccepted', 'authorization'];
   if (!p || typeof p !== 'object' || Array.isArray(p) || Object.keys(p).some(k => !keys.includes(k))) throw new Error('Invalid account profile fields');
   if (p.version !== 1 || typeof p.accountId !== 'string' || !/^\d{6,20}$/.test(p.accountId) || !/^[a-z]{2}-[a-z0-9-]+$/.test(p.region)) throw new Error('Invalid account profile accountId/region/version');
-  if (!/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/.test(p.zone)) throw new Error('Invalid account DNS zone');
+  if (p.zone !== undefined && !/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/.test(p.zone)) throw new Error('Invalid account DNS zone');
   if (!isAbsolute(p.projectRoot || '') || resolve(p.projectRoot) === '/' || /[\r\n\0]/.test(p.projectRoot)) throw new Error('account.projectRoot must be an absolute persistent directory');
   if (p.acmeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.acmeEmail)) throw new Error('Invalid ACME email');
   if (p.acmeTermsAccepted !== undefined && typeof p.acmeTermsAccepted !== 'boolean') throw new Error('acmeTermsAccepted must reflect the operator\'s actual CA agreement');
@@ -41,7 +41,7 @@ function projectDatabase(p, project, shared) {
 
 export function checkAccountProject(p, config) {
   const expected = projectDatabase(p, config.project, config.database?.shared);
-  if (config.accountId !== p.accountId || config.region !== p.region || config.dns?.zone !== p.zone) throw new Error('Project account, region or DNS zone differs from the configured account');
+  if (config.accountId !== p.accountId || config.region !== p.region || (p.zone !== undefined && config.dns?.zone !== p.zone)) throw new Error('Project account, region or DNS zone differs from the configured account');
   if (config.frontend && config.frontend.bucket !== `${config.project}-${p.accountId}`) throw new Error('Application bucket must be <project>-<accountId>');
   if (config.backend && config.backend.functionName !== config.project) throw new Error('Application functionName must equal project');
   if (config.database && config.database.instance !== expected.instanceName) throw new Error('Application database must use its own instance; sharing requires database.shared with an ownerProject and reason');
@@ -56,19 +56,27 @@ export async function checkPersistentProject(_account, path) {
   if (temporaryRoots.some(within)) throw new Error('Keep application source in a persistent directory, outside system temporary directories');
 }
 
-export async function initProject(p, project, configPath) {
+export function accountZone(p, zone = p.zone) {
+  if (!zone) throw new Error('The account is connected, but a website needs a DNS zone. Supply --zone example.com from the task or set a default domain in Client Pi connections.');
+  if (typeof zone !== 'string' || !/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/.test(zone)) throw new Error('Use a lowercase DNS zone such as example.com');
+  if (p.zone && zone !== p.zone) throw new Error('The requested DNS zone differs from the configured account; confirm and update the deployment defaults first');
+  return zone;
+}
+
+export async function initProject(p, project, configPath, zone) {
   projectDatabase(p, project);
+  zone = accountZone(p, zone);
   const directory = configPath ? resolve(configPath, '..') : join(p.projectRoot, project);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const template = JSON.parse(await readFile(new URL('../assets/aliyun.example.json', import.meta.url), 'utf8'));
   Object.assign(template, { accountId: p.accountId, region: p.region, project });
   template.frontend.bucket = `${project}-${p.accountId}`;
-  template.frontend.domain = `${project.slice(10)}.${p.zone}`;
+  template.frontend.domain = `${project.slice(10)}.${zone}`;
   template.backend.functionName = project;
-  template.backend.domain = `${project.slice(10)}-api.${p.zone}`;
+  template.backend.domain = `${project.slice(10)}-api.${zone}`;
   Object.assign(template.backend, { cpu: 0.1, memorySize: 256, maxInstances: 1, timeout: 30, instanceConcurrency: 5 });
-  template.dns.zone = p.zone;
-  if (p.acmeEmail) template.tls.acme = { email: p.acmeEmail, accountKeyFile: '.aliyun/tls/account.key', agreeToTerms: p.acmeTermsAccepted === true, ...(p.acmeProxyUrl ? { proxyUrl: p.acmeProxyUrl } : {}) };
+  template.dns.zone = zone;
+  template.tls.acme = { ...(p.acmeEmail ? { email: p.acmeEmail } : {}), accountKeyFile: '.aliyun/tls/account.key', agreeToTerms: p.acmeTermsAccepted === true, ...(p.acmeProxyUrl ? { proxyUrl: p.acmeProxyUrl } : {}) };
   await writeFile(configPath || join(directory, 'aliyun.json'), JSON.stringify(template, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   // Existing application repositories keep their ignore rules.
   const ignorePath = join(directory, '.gitignore');

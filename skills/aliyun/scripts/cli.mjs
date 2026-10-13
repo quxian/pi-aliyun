@@ -2,7 +2,7 @@
 import { resolve } from 'node:path';
 import { loadConfig, doctor, plan } from './config.mjs';
 import { databasePlan } from './database-plan.mjs';
-import { loadAccount, initProject, checkAccountProject, checkPersistentProject } from './account.mjs';
+import { loadAccount, initProject, accountZone, checkAccountProject, checkPersistentProject } from './account.mjs';
 import { errorInfo, operation } from './errors.mjs';
 import { readResources, saveResources } from './resources.mjs';
 import { verifyApplication } from './verify.mjs';
@@ -21,10 +21,10 @@ async function main() {
     return;
   }
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('pi-aliyun init --project pi-aliyun-name [--profile path] [--config existing-project/aliyun.json]\npi-aliyun <doctor|plan|build|deploy|status|diagnose|verify|renew|db-plan|db-inspect|db-setup> [--config aliyun.json]\npi-aliyun destroy [--config aliyun.json] [--confirm exact-project-name]\npi-aliyun <account|policy> [--profile path]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\ninit always inherits the account. destroy without --confirm is read-only.');
+    console.log('pi-aliyun init --project pi-aliyun-name [--profile path] [--config existing-project/aliyun.json] [--zone example.com]\npi-aliyun <doctor|plan|build|deploy|status|diagnose|verify|renew|db-plan|db-inspect|db-setup> [--config aliyun.json]\npi-aliyun destroy [--config aliyun.json] [--confirm exact-project-name]\npi-aliyun account [--profile path]\npi-aliyun policy [--profile path] [--zone example.com]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\ninit always inherits the account. destroy without --confirm is read-only.');
     return;
   }
-  const accountCommands = { account: ['profile'], policy: ['profile'], init: ['profile', 'project', 'config'] };
+  const accountCommands = { account: ['profile'], policy: ['profile', 'zone'], init: ['profile', 'project', 'config', 'zone'] };
   const commands = {
     ...accountCommands,
     doctor: ['config'], plan: ['config'], build: ['config'], deploy: ['config'],
@@ -47,8 +47,8 @@ async function main() {
     if (command === 'account') console.log(JSON.stringify(profile, null, 2));
     else if (command === 'policy') {
       const { deploymentPolicy } = await import('./policy.mjs');
-      console.log(JSON.stringify(deploymentPolicy(profile), null, 2));
-    } else await initProject(profile, options.project, options.config ? path : undefined);
+      console.log(JSON.stringify(deploymentPolicy({ ...profile, zone: accountZone(profile, options.zone) }), null, 2));
+    } else await initProject(profile, options.project, options.config ? path : undefined, options.zone);
     return;
   }
   if (['schedule', 'renew-all', 'install-renewal'].includes(command)) {

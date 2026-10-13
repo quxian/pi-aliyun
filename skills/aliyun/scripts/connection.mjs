@@ -6,6 +6,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import CredentialModule from '@alicloud/credentials';
 import STSModule from '@alicloud/sts20150401';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
+import FCModule, * as FC from '@alicloud/fc20230330';
+import CASModule, * as CAS from '@alicloud/cas20200407';
+import OTSModule, * as OTS from '@alicloud/tablestore20201209';
+import RAMModule, * as RAM from '@alicloud/ram20150501';
+import OSS from 'ali-oss';
+import { inspectServiceAccess } from './connection-checks.mjs';
 
 const Client = module => module.default || module;
 const Credential = Client(CredentialModule);
@@ -74,7 +80,8 @@ export async function createCredential(selection) {
   return new Credential(null, provider);
 }
 
-export async function inspectConnection({ selection } = {}) {
+export async function inspectConnection({ selection, region = 'cn-hangzhou' } = {}) {
+  if (typeof region !== 'string' || !/^[a-z]{2}-[a-z0-9-]+$/.test(region)) throw new Error('Choose a valid Alibaba Cloud region for the connection checks');
   const credential = await createCredential(selection);
   let identity;
   try {
@@ -87,14 +94,33 @@ export async function inspectConnection({ selection } = {}) {
   }
   if (!/^\d{6,20}$/.test(identity?.accountId || '')) throw new Error('Alibaba Cloud returned an invalid account identity');
   const domains = [];
-  let domainsUnavailable = false;
-  try {
-    const dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https', connectTimeout: 10000, readTimeout: 15000 });
-    for (let pageNumber = 1; pageNumber <= 20; pageNumber++) {
-      const response = (await dns.describeDomains(new DNS.DescribeDomainsRequest({ pageNumber, pageSize: 100 }))).body;
-      domains.push(...(response?.domains?.domain || []).map(domain => domain.domainName).filter(value => typeof value === 'string'));
-      if (pageNumber * 100 >= (response?.totalCount || 0)) break;
-    }
-  } catch { domainsUnavailable = true; }
-  return { accountId: identity.accountId, identity: identity.arn || identity.userId || identity.accountId, domains: [...new Set(domains)].sort(), domainsUnavailable, ...(selection ? { source: selection } : {}) };
+  const options = { credential, protocol: 'https', connectTimeout: 10000, readTimeout: 15000 };
+  const dns = new (Client(DNSModule))({ ...options, endpoint: 'alidns.cn-hangzhou.aliyuncs.com' });
+  const fc = new (Client(FCModule))({ ...options, regionId: region, endpoint: `fcv3.${region}.aliyuncs.com` });
+  const ots = new (Client(OTSModule))({ ...options, regionId: region, endpoint: `tablestore.${region}.aliyuncs.com` });
+  const cas = new (Client(CASModule))({ ...options, endpoint: 'cas.aliyuncs.com' });
+  const ram = new (Client(RAMModule))({ ...options, endpoint: 'ram.aliyuncs.com' });
+  const checks = await inspectServiceAccess(identity, [
+    { service: 'alidns', action: 'alidns:DescribeDomains', run: async () => {
+      for (let pageNumber = 1; pageNumber <= 20; pageNumber++) {
+        const response = (await dns.describeDomains(new DNS.DescribeDomainsRequest({ pageNumber, pageSize: 100 }))).body;
+        domains.push(...(response?.domains?.domain || []).map(domain => domain.domainName).filter(value => typeof value === 'string'));
+        if (pageNumber * 100 >= (response?.totalCount || 0)) break;
+      }
+    } },
+    { service: 'oss', action: 'oss:ListBuckets', run: async () => {
+      const key = await credential.getCredential();
+      const oss = new OSS({ accessKeyId: key.accessKeyId, accessKeySecret: key.accessKeySecret, stsToken: key.securityToken,
+        region: `oss-${region}`, secure: true, authorizationV4: true, timeout: 15000 });
+      await oss.listBuckets({ 'max-keys': 1 });
+    } },
+    { service: 'fc', action: 'fc:ListFunctions', run: () => fc.listFunctions(new FC.ListFunctionsRequest({ limit: 1 })) },
+    { service: 'ots', action: 'ots:ListInstance', run: () => ots.listInstances(new OTS.ListInstancesRequest({ maxResults: 1 })) },
+    { service: 'cas', action: 'yundun-cert:ListUserCertificateOrder', run: () => cas.listUserCertificateOrder(new CAS.ListUserCertificateOrderRequest({ currentPage: 1, showSize: 1 })) },
+    { service: 'ram', action: 'ram:ListPolicies', run: () => ram.listPolicies(new RAM.ListPoliciesRequest({ policyType: 'Custom', maxItems: 1 })) },
+  ]);
+  return { accountId: identity.accountId, identity: identity.arn || identity.userId || identity.accountId,
+    identityType: identity.identityType, principalId: identity.principalId,
+    domains: [...new Set(domains)].sort(), domainsUnavailable: checks.serviceChecks.find(check => check.service === 'alidns').status !== 'ok',
+    ...checks, ...(selection ? { source: selection } : {}) };
 }

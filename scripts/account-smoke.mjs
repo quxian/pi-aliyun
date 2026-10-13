@@ -3,9 +3,12 @@ import { mkdtemp, mkdir, rm, readFile, writeFile, symlink } from 'node:fs/promis
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { validateAccount, loadAccount, defaultAccountPath, checkAccountProject, checkPersistentProject, initProject } from '../skills/aliyun/scripts/account.mjs';
 import { deploymentPolicy } from '../skills/aliyun/scripts/policy.mjs';
 import { databaseNames } from '../skills/aliyun/scripts/database-plan.mjs';
+import { validateConfig } from '../skills/aliyun/scripts/config.mjs';
+import { prepareTls } from '../skills/aliyun/scripts/tls.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'pi-aliyun-account-'));
 try {
@@ -22,6 +25,25 @@ try {
   assert.deepEqual(await loadAccount(join(root, 'account.json')), p);
   assert.equal(await loadAccount(join(root, 'missing.json'), { optional: true }), undefined);
   await assert.rejects(loadAccount(join(root, 'missing.json')), /ENOENT/);
+
+  const { zone: _zone, acmeEmail: _email, ...withoutDefaults } = p;
+  assert.deepEqual(validateAccount(withoutDefaults), withoutDefaults);
+  assert.throws(() => deploymentPolicy(withoutDefaults), /--zone/);
+  await assert.rejects(initProject(withoutDefaults, 'pi-aliyun-no-zone'), /--zone/);
+  await writeFile(join(root, 'minimal-account.json'), JSON.stringify(withoutDefaults));
+  const cli = fileURLToPath(new URL('../skills/aliyun/scripts/cli.mjs', import.meta.url));
+  const run = (...args) => execFileSync(process.execPath, [cli, ...args, '--profile', join(root, 'minimal-account.json')], { encoding: 'utf8' });
+  run('init', '--project', 'pi-aliyun-from-task', '--zone', 'task.example.com');
+  const fromTask = JSON.parse(await readFile(join(p.projectRoot, 'pi-aliyun-from-task/aliyun.json')));
+  assert.equal(fromTask.dns.zone, 'task.example.com');
+  assert.equal(fromTask.tls.acme.email, undefined);
+  assert.equal(fromTask.tls.acme.agreeToTerms, false);
+  checkAccountProject(withoutDefaults, fromTask);
+  assert(JSON.stringify(JSON.parse(run('policy', '--zone', 'task.example.com'))).includes('domain/task.example.com'));
+  assert(!JSON.stringify(fromTask).includes('undefined'));
+  const prepared = validateConfig(fromTask, join(p.projectRoot, 'pi-aliyun-from-task'));
+  await assert.rejects(prepareTls(prepared), /条款/);
+  assert.equal(validateConfig({ ...fromTask, tls: { ...fromTask.tls, acme: { ...fromTask.tls.acme, agreeToTerms: true } } }, root).tls.acme.email, undefined);
 
   const policy = deploymentPolicy(p);
   const text = JSON.stringify(policy);

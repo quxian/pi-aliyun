@@ -18,13 +18,15 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 
 ### 可选：通过 Client Pi 安装
 
-在「Agent 页面 → 能力包」填入 `https://github.com/quxian/pi-aliyun.git`，也支持已配置 Git 认证的私有仓库地址，如 `git@gitee.com:owner/pi-aliyun.git`。Client Pi 提供安装入口，本包独立于其源码和运行服务。
+在「连接 → 阿里云」连接账号，Client Pi 自动安装本包并提供给同一主机上的所有 Agent，无需逐个安装。
 
 已与 Agent 约定开发并上线、且完成账号配置后，可以直接描述应用需求；Agent 应沿用现有授权完成交付。继续开发已有应用时，提供或沿用它的项目位置，新对话和新功能不会自动创建另一套应用资源。用户明确要求只讨论或只做本地开发时，按该范围执行。
 
 ## 配置账号
 
-在 Client Pi 中使用时，从「连接 → 阿里云」完成浏览器授权并选择地域、域名即可，现有和新建 Agent 共用同一连接。服务器上的授权也使用同一流程：授权后若浏览器停在 localhost 地址，将完整回调地址填回连接页面。凭据由主机上的官方 CLI 和 SDK 管理；不要将凭据文件复制到对话或业务项目。Client Pi 使用 `PI_ALIYUN_ACCOUNT_FILE` 指定部署默认配置，`PI_ALIYUN_CONNECTION_FILE` 指定已连接的 OAuth profile，授权失效时在连接页面重新授权。
+在 Client Pi 中使用时，从「连接 → 阿里云」按页面引导完成浏览器授权，现有和新建 Agent 共用同一连接。域名和 HTTPS 设置可在发布网站时补充，不影响账号连接。凭据由主机上的官方 CLI 和 SDK 管理；不要将凭据文件复制到对话或业务项目。Client Pi 使用 `PI_ALIYUN_ACCOUNT_FILE` 指定部署默认配置，`PI_ALIYUN_CONNECTION_FILE` 指定已连接的 OAuth profile，授权失效时在连接页面重新授权。
+
+连接自动检查身份及各服务的只读访问。检查结果保留具体读取操作、错误码和请求编号，不输出凭据；读取成功不代表部署写权限已验证，读取被拒绝也不代表全部部署操作不可用。主账号显示其账号权限依据，RAM 身份保留“未完整验证”，实际部署遇到拒绝时再定位所需权限。地域和域名配置不会收窄 OAuth 凭据或形成 RAM 隔离。
 
 在部署服务用户的 `~/.config/pi-aliyun/account.json` 保存非敏感配置：
 
@@ -40,7 +42,7 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 }
 ```
 
-`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。`acmeTermsAccepted` 只在用户已同意所选 CA 条款后设置，新应用继承这一同意。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
+`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。`zone` 可暂缺，发布网站时使用任务指定域名或保存默认域名；已保存的域名仍会用于核对项目配置。`acmeEmail` 可选。`acmeTermsAccepted` 只在用户已同意所选 CA 条款后设置，新应用继承这一同意。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
 
 凭据由官方 [credentials SDK](https://github.com/aliyun/credentials-nodejs) 读取：推荐为部署主机配置 RAM 角色，也可使用 SDK 凭据文件或环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，临时凭据再加 `ALIBABA_CLOUD_SECURITY_TOKEN`。SDK 默认凭据文件是该服务用户的 `~/.alibabacloud/credentials`，可用 `ALIBABA_CLOUD_CREDENTIALS_FILE` 指定其它路径；文件应只允许该用户读取。凭据属于**执行部署的主机和服务用户**，不是浏览器，也不写入上述 JSON。
 
@@ -48,6 +50,8 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 pi-aliyun account
 pi-aliyun policy --profile /path/to/account.json > deployment-policy.json
 ```
+
+没有默认域名时，为 `init` 或 `policy` 传入 `--zone example.com`。这只补充当前操作所需的域名，不修改已有账号默认值。
 
 管理员将生成的完整策略授予部署身份一次，开通所用云服务。策略包含创建、查看、更新和删除应用资源，以及运行角色管理。证书列表、部署关系和删除接口要求账号级权限；程序只清理本应用域名和已记录指纹匹配的上传证书。同范围应用无需逐个手工配置 RAM；包更新需要新增权限时，先展示完整增量，经用户确认后更新这份正式策略。
 

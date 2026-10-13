@@ -1,3 +1,5 @@
+import { fcOAuthCompatibilityMessage, fcOAuthCompatibilityHint, isMissingSecurityToken } from './errors.mjs';
+
 // These checks report only the named read operation. They never simulate deployment.
 export async function inspectServiceAccess(identity, checks) {
   const checkedAt = new Date().toISOString();
@@ -10,6 +12,10 @@ export async function inspectServiceAccess(identity, checks) {
       const safe = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,180}$/.test(value) ? value : undefined;
       const code = safe(error?.code) || safe(error?.cause?.code) || 'Error';
       const requestId = safe(error?.requestId || error?.data?.RequestId || error?.data?.requestId);
+      if (service === 'fc' && isMissingSecurityToken(error)) {
+        return { service, action, status: 'unavailable', code, ...(requestId ? { requestId } : {}),
+          message: `${fcOAuthCompatibilityMessage}${fcOAuthCompatibilityHint}` };
+      }
       const detail = error?.data?.AccessDeniedDetail;
       const denied = /NoPermission|AccessDenied|PermissionDenied|UnauthorizedOperation|Forbidden\.RAM/i.test(code)
         || ['ExplicitDeny', 'ImplicitDeny'].includes(detail?.NoPermissionType);

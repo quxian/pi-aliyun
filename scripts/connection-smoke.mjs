@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { inspectServiceAccess } from '../skills/aliyun/scripts/connection-checks.mjs';
-import { errorInfo } from '../skills/aliyun/scripts/errors.mjs';
+import { errorInfo, fcOAuthCompatibilityMessage, fcOAuthCompatibilityHint, operation } from '../skills/aliyun/scripts/errors.mjs';
 
 const failed = (code, extra = {}) => async () => { throw Object.assign(new Error('secret-response-must-not-leak'), { code, ...extra }); };
 const checks = [
@@ -27,4 +27,40 @@ assert.equal(unsafe.serviceChecks[0].requestId, undefined);
 const diagnostic = errorInfo({ code: 'NoPermission', data: { AccessDeniedDetail: { AuthAction: 'ram:CreateRole', Authorization: 'secret' } } });
 assert.equal(diagnostic.action, 'ram:CreateRole');
 assert(!JSON.stringify(diagnostic).includes('secret'));
-console.log('Connection smoke passed: independent read checks, permission/activation/network distinction, honest RAM status and safe diagnostics. No cloud APIs called.');
+
+const tokenError = { code: 'AccessDenied', data: { Message: 'missing parameter SecurityToken', RequestId: 'fc-request-123', Authorization: 'secret-header' } };
+const compatibility = await inspectServiceAccess({ identityType: 'Account' }, [
+  { service: 'fc', action: 'fc:ListFunctions', run: failed(tokenError.code, tokenError) },
+  { service: 'oss', action: 'oss:ListBuckets', run: async () => {} },
+  { service: 'ram', action: 'ram:ListPolicies', run: failed(tokenError.code, tokenError) },
+  { service: 'fc', action: 'fc:ListFunctions', run: failed('AccessDenied', { data: { Message: 'missing parameter SecurityToken secret' } }) },
+]);
+assert.deepEqual(compatibility.serviceChecks.map(({ status }) => status), ['unavailable', 'ok', 'denied', 'denied']);
+assert.equal(compatibility.serviceChecks[0].message, fcOAuthCompatibilityMessage + fcOAuthCompatibilityHint);
+assert.equal(compatibility.serviceChecks[0].requestId, 'fc-request-123');
+assert.equal(compatibility.permissions.status, 'account-owner');
+assert(!JSON.stringify(compatibility).includes('secret'));
+assert(!JSON.stringify(compatibility).includes('missing parameter SecurityToken'));
+
+const connectionFile = process.env.PI_ALIYUN_CONNECTION_FILE;
+try {
+  delete process.env.PI_ALIYUN_CONNECTION_FILE;
+  assert.doesNotMatch(errorInfo(tokenError).message, /OAuth/);
+  process.env.PI_ALIYUN_CONNECTION_FILE = '/unused-smoke-oauth-connection.json';
+  const failure = errorInfo(tokenError);
+  assert.equal(failure.message, fcOAuthCompatibilityMessage);
+  assert.equal(failure.hint, fcOAuthCompatibilityHint);
+  assert.equal(failure.requestId, 'fc-request-123');
+  assert(!JSON.stringify(failure).includes('secret'));
+  await assert.rejects(() => operation('Deploy FC smoke', failed(tokenError.code, tokenError)), error => {
+    const output = errorInfo(error);
+    assert.match(output.message, /OAuth/);
+    assert.match(output.message, /无需追加 RAM 权限或重新授权/);
+    assert(!JSON.stringify(output).includes('secret'));
+    return true;
+  });
+} finally {
+  if (connectionFile === undefined) delete process.env.PI_ALIYUN_CONNECTION_FILE;
+  else process.env.PI_ALIYUN_CONNECTION_FILE = connectionFile;
+}
+console.log('Connection smoke passed: independent read checks, honest permissions, FC OAuth compatibility diagnostics and safe deployment errors. No cloud APIs called.');

@@ -7,6 +7,8 @@ description: Build and deliver web applications when Alibaba Cloud is requested 
 
 Use `node <this skill directory>/scripts/cli.mjs` from the business project. The CLI manages static frontends on OSS, HTTP backends on FC, AliDNS/HTTPS and Tablestore. Existing SQL connections can use `backend.envFrom`; SQL provisioning and schema changes require product-specific work. Preserve the application's data semantics when choosing infrastructure.
 
+When Client Pi supplies this package through Connections, the host account and credential source are already configured for all Agents. Run `account` to read the approved deployment defaults; do not copy credentials into Agent settings or ask the user to configure each new Agent. If the connection expires or defaults are missing, direct the user to Client Pi → 连接 → 阿里云. Never read or print the credential file named by `PI_ALIYUN_CONNECTION_FILE`; the CLI handles it internally.
+
 ## Start from the user's request
 
 When the user has established development-through-deployment as the workflow, a feature request includes implementation, deployment and acceptance. The user need not name this skill or repeat the cloud setup. Respect requests limited to discussion or local work. Choose routine technical details from the business needs and approved account defaults; ask only for missing decisions that materially affect the result or authorization. Carry the task through to a usable URL and report the verified outcome.

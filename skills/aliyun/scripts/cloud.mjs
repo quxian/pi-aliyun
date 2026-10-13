@@ -1,4 +1,4 @@
-import CredentialModule from '@alicloud/credentials';
+import { createCredential } from './connection.mjs';
 import FCModule, * as FC from '@alicloud/fc20230330';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
@@ -9,7 +9,7 @@ import { X509Certificate } from 'node:crypto';
 
 const Client = (module) => module.default || module;
 export async function createClients(config, { services = ['dns', 'fc', 'oss'] } = {}) {
-  const credential = new (Client(CredentialModule))();
+  const credential = await createCredential();
   const sts = new (Client(STSModule))({ credential, endpoint: 'sts.cn-hangzhou.aliyuncs.com', protocol: 'https' });
   let identity;
   try { identity = await sts.getCallerIdentity(); }

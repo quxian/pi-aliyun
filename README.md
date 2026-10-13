@@ -24,6 +24,8 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 
 ## 配置账号
 
+在 Client Pi 中使用时，从「连接 → 阿里云」完成浏览器授权并选择地域、域名即可，现有和新建 Agent 共用同一连接。服务器上的授权也使用同一流程：授权后若浏览器停在 localhost 地址，将完整回调地址填回连接页面。凭据由主机上的官方 CLI 和 SDK 管理；不要将凭据文件复制到对话或业务项目。Client Pi 使用 `PI_ALIYUN_ACCOUNT_FILE` 指定部署默认配置，`PI_ALIYUN_CONNECTION_FILE` 指定已连接的 OAuth profile，授权失效时在连接页面重新授权。
+
 在部署服务用户的 `~/.config/pi-aliyun/account.json` 保存非敏感配置：
 
 ```json

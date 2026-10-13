@@ -4,7 +4,7 @@ import { join, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { databaseNames, validateDatabaseShared } from './database-plan.mjs';
 
-export const defaultAccountPath = () => join(homedir(), '.config/pi-aliyun/account.json');
+export const defaultAccountPath = () => process.env.PI_ALIYUN_ACCOUNT_FILE || join(homedir(), '.config/pi-aliyun/account.json');
 
 export function validateAccount(value) {
   const p = structuredClone(value);

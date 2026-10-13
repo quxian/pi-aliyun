@@ -9,6 +9,17 @@ import { verifyApplication } from './verify.mjs';
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (command === 'connection') {
+    if (args.length) throw new Error('connection accepts its optional credential selection as JSON on stdin');
+    let input = '';
+    for await (const chunk of process.stdin) {
+      input += chunk;
+      if (input.length > 65536) throw new Error('Connection input is too large');
+    }
+    const { inspectConnection } = await import('./connection.mjs');
+    console.log(JSON.stringify(await inspectConnection(input.trim() ? JSON.parse(input) : {})));
+    return;
+  }
   if (!command || ['help', '--help', '-h'].includes(command)) {
     console.log('pi-aliyun init --project pi-aliyun-name [--profile path] [--config existing-project/aliyun.json]\npi-aliyun <doctor|plan|build|deploy|status|diagnose|verify|renew|db-plan|db-inspect|db-setup> [--config aliyun.json]\npi-aliyun destroy [--config aliyun.json] [--confirm exact-project-name]\npi-aliyun <account|policy> [--profile path]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\ninit always inherits the account. destroy without --confirm is read-only.');
     return;

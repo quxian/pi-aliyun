@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateConfig } from '../skills/aliyun/scripts/config.mjs';
 import { databaseNames } from '../skills/aliyun/scripts/database-plan.mjs';
-import { inspectApplication, planDestroy, destroyApplication, dnsTargets } from '../skills/aliyun/scripts/operations.mjs';
+import { inspectApplication, planDestroy, destroyApplication } from '../skills/aliyun/scripts/operations.mjs';
+import { dnsTargets, dnsResources } from '../skills/aliyun/scripts/dns.mjs';
 import { verifyApplication } from '../skills/aliyun/scripts/verify.mjs';
 import { errorInfo } from '../skills/aliyun/scripts/errors.mjs';
 import { saveResources } from '../skills/aliyun/scripts/resources.mjs';
-import { backendNames } from '../skills/aliyun/scripts/ros.mjs';
+import { applicationNames } from '../skills/aliyun/scripts/ros.mjs';
 import { applicationCertificates } from '../skills/aliyun/scripts/certificates.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'pi-aliyun-operations-'));
@@ -22,19 +23,21 @@ try {
   const state = { codeBucket: true, codeObjects: ['code/' + 'a'.repeat(64) + '.zip'], function: true, domain: true, trigger: true, bucket: true, database: true, role: true, policy: true, attached: true,
     tables: [names.prefix + 'notes'], objects: ['index.html'], certificate: true, uploads: [], wrongBucket: false, shared: false, versioned: false };
   const writes = [], checked = request => request.validate();
-  const records = dnsTargets(config).map((target, i) => ({ recordId: String(i), RR: target.domain.slice(0, -(config.dns.zone.length + 1)), type: 'CNAME', line: 'default', status: 'ENABLE', value: target.value }));
+  const records = dnsTargets(config).map((target, i) => ({ recordId: String(i), RR: target.domain.slice(0, -(config.dns.zone.length + 1)), TTL: config.dns.ttl, type: 'CNAME', line: 'default', status: 'ENABLE', value: target.value }));
   const domains = [config.frontend.domain, config.backend.domain];
   const certificate = { fingerprint: 'a'.repeat(40), publicKeySha256: 'b'.repeat(64), serialNumber: 'c'.repeat(32) };
   const clients = {
     ros: {
-      listStacks: async req => { checked(req); return { body: { stacks: state.function ? [{ stackName: backendNames(config).stackName, stackId: 'stack-123', status: 'CREATE_COMPLETE' }] : [] } }; },
-      getStack: async req => { checked(req); return { body: { stackName: backendNames(config).stackName, stackId: 'stack-123', status: state.function ? 'CREATE_COMPLETE' : 'DELETE_COMPLETE', tags: [{ key: 'pi-aliyun-project', value: config.project }] } }; },
+      listStacks: async req => { checked(req); return { body: { stacks: state.function ? [{ stackName: applicationNames(config).stackName, stackId: 'stack-123', status: 'CREATE_COMPLETE' }] : [] } }; },
+      getStack: async req => { checked(req); return { body: { stackName: applicationNames(config).stackName, stackId: 'stack-123', status: state.function ? 'CREATE_COMPLETE' : 'DELETE_COMPLETE', tags: [{ key: 'pi-aliyun-project', value: config.project }] } }; },
+      listStackResources: async req => { checked(req); return { body: { resources: dnsTargets(config).map((target, i) => ({ logicalResourceId: target.logicalId, physicalResourceId: String(i), resourceType: 'ALIYUN::DNS::DomainRecord', status: 'CREATE_COMPLETE' })) } }; },
       getTemplate: async () => ({ body: { templateBody: { Description: `Managed by pi-aliyun: ${config.project}`, Resources: {
-        Function: { Type: 'ALIYUN::FC3::Function', Properties: { FunctionName: config.backend.functionName, Code: { OssBucketName: backendNames(config).codeBucket } } },
+        ...dnsResources(config),
+        Function: { Type: 'ALIYUN::FC3::Function', Properties: { FunctionName: config.backend.functionName, Code: { OssBucketName: applicationNames(config).codeBucket } } },
         Concurrency: { Type: 'ALIYUN::FC3::ConcurrencyConfig' }, HttpTrigger: { Type: 'ALIYUN::FC3::Trigger' },
         Domain: { Type: 'ALIYUN::FC3::CustomDomain', Properties: { DomainName: config.backend.domain, Protocol: 'HTTPS' } },
       } } } }),
-      deleteStack: async req => { checked(req); state.function = false; writes.push('stack'); },
+      deleteStack: async req => { checked(req); state.function = false; records.length = 0; writes.push('stack'); },
     },
     codeOss: {
       getBucketInfo: async () => state.codeBucket ? { bucket: { Owner: { ID: config.accountId }, Location: config.region } } : absent('NoSuchBucket'),
@@ -58,7 +61,7 @@ try {
     },
     dns: {
       describeDomainRecords: async req => ({ body: { totalCount: records.length, domainRecords: { record: records.filter(r => r.RR === req.RRKeyWord) } } }),
-      deleteDomainRecord: async req => { checked(req); records.splice(records.findIndex(r => r.recordId === req.recordId), 1); writes.push('dns'); },
+      deleteDomainRecord: async () => { throw new Error('DNS must only be deleted by ROS'); },
     },
     cas: {
       listUserCertificateOrder: async req => { checked(req); return { body: { totalCount: state.certificate ? 1 : 0, certificateOrderList: state.certificate ? [{ certificateId: 123, commonName: domains[0], sans: domains.join(','), fingerprint: certificate.fingerprint, sha2: certificate.publicKeySha256, serialNo: certificate.serialNumber, upload: true }] : [] } }; },
@@ -96,6 +99,9 @@ try {
   const manifest = JSON.parse(await readFile(manifestPath)); manifest.tls.certificates = [certificate]; await writeFile(manifestPath, JSON.stringify(manifest));
   assert((await planDestroy(clients, config, path, { database })).ok);
   assert.deepEqual(writes, []);
+  const ownedId = records[0].recordId; records[0].recordId = 'outside-stack';
+  assert.equal((await planDestroy(clients, config, path, { database })).ok, false);
+  records[0].recordId = ownedId;
   await assert.rejects(destroyApplication(clients, config, path, { database, confirm: 'wrong', registry }), /exact project/);
   for (const flag of ['wrongBucket', 'versioned', 'shared']) {
     state[flag] = true;

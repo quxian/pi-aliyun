@@ -90,8 +90,8 @@ async function main() {
     console.log(`Local artifacts ready: ${artifacts.frontendFiles?.length || 0} frontend files; ${artifacts.backendArchive?.length || 0} backend ZIP bytes.`);
     if (command === 'build') return;
   }
-  const { createClients, ensureCname, deployFrontend, bindFrontendDomain } = await import('./cloud.mjs');
-  const { deployBackend, renewBackendCertificate } = await import('./ros.mjs');
+  const { createClients, deployFrontend, bindFrontendDomain } = await import('./cloud.mjs');
+  const { deployApplicationStack, checkApplicationDns, renewBackendCertificate } = await import('./ros.mjs');
   if (['status', 'diagnose', 'destroy'].includes(command)) {
     const clients = await createClients(config, { services: ['dns', 'ros', 'oss', 'cas'] });
     const { inspectApplication, planDestroy, destroyApplication } = await import('./operations.mjs');
@@ -140,6 +140,7 @@ async function main() {
     return;
   }
   const clients = await createClients(config);
+  await checkApplicationDns(clients, config);
   await saveResources(config, path, { state: 'deploying' });
   if (config.database) {
     const { createDatabaseClients, provisionDatabase } = await import('./database.mjs');
@@ -148,16 +149,10 @@ async function main() {
   }
   const tls = await operation('Prepare HTTPS certificate', () => prepareTls(config));
   await saveResources(config, path, { state: 'deploying' });
-  if (config.backend) {
-    await ensureCname(clients.dns, config, config.backend.domain, `${config.accountId}.${config.region}.fc.aliyuncs.com`);
-    await operation(`Deploy FC via ROS ${config.backend.functionName}`, () => deployBackend(clients, config, artifacts.backendArchive, artifacts.environment, tls));
-    console.log(`Backend published: https://${config.backend.domain}`);
-  }
-  if (config.frontend) {
-    await operation(`Deploy OSS ${config.frontend.bucket}`, () => deployFrontend(clients.oss, config, artifacts.frontendFiles, tls, { dns: clients.dns }));
-    await ensureCname(clients.dns, config, config.frontend.domain, `${config.frontend.bucket}.oss-${config.region}.aliyuncs.com`);
-    console.log(`Frontend published: https://${config.frontend.domain}`);
-  }
+  if (config.frontend) await operation(`Deploy OSS ${config.frontend.bucket}`, () => deployFrontend(clients.oss, config, artifacts.frontendFiles, tls, { dns: clients.dns }));
+  await operation(`Deploy application ROS stack ${config.project}`, () => deployApplicationStack(clients, config, artifacts.backendArchive, artifacts.environment, tls));
+  if (config.backend) console.log(`Backend published: https://${config.backend.domain}`);
+  if (config.frontend) console.log(`Frontend published: https://${config.frontend.domain}`);
   if (account && config.tls.acme?.agreeToTerms) {
     const { registerRenewal } = await import('./renewal.mjs');
     await registerRenewal(path);

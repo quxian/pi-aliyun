@@ -1,5 +1,6 @@
+import { domainRecords } from './dns.mjs';
 import { createCredential } from './connection.mjs';
-import { createRosClient, backendNames } from './ros.mjs';
+import { createRosClient, applicationNames } from './ros.mjs';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
 import OSS from 'ali-oss';
@@ -21,7 +22,7 @@ export async function createClients(config, { services = ['dns', 'ros', 'oss'] }
     clients.cas = new (Client(CASModule))({ credential, endpoint: 'cas.aliyuncs.com', protocol: 'https' });
   }
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
-  if (services.includes('ros') && config.backend) clients.ros = createRosClient(credential);
+  if (services.includes('ros')) clients.ros = createRosClient(credential);
   if (services.includes('oss') && (config.frontend || config.backend)) {
     const resolveCredential = async () => {
       const result = await credential.getCredential();
@@ -30,7 +31,7 @@ export async function createClients(config, { services = ['dns', 'ros', 'oss'] }
     const options = { ...await resolveCredential(), region: `oss-${config.region}`, secure: true, authorizationV4: true,
       refreshSTSToken: resolveCredential, refreshSTSTokenInterval: 60_000 };
     if (config.frontend) clients.oss = new OSS({ ...options, bucket: config.frontend.bucket });
-    if (config.backend) clients.codeOss = new OSS({ ...options, bucket: backendNames(config).codeBucket });
+    if (config.backend) clients.codeOss = new OSS({ ...options, bucket: applicationNames(config).codeBucket });
   }
   return clients;
 }
@@ -39,29 +40,6 @@ export function isMissing(error) {
   return ['FunctionNotFound', 'TriggerNotFound', 'DomainNameNotFound', 'CustomDomainNotFound', 'NoSuchBucket'].includes(error.code);
 }
 
-export async function domainRecords(dns, config, RR) {
-  const records = [];
-  for (let pageNumber = 1; ; pageNumber++) {
-    const response = await dns.describeDomainRecords(new DNS.DescribeDomainRecordsRequest({ domainName: config.dns.zone, RRKeyWord: RR, searchMode: 'EXACT', pageNumber, pageSize: 500 }));
-    const batch = response.body?.domainRecords?.record || [];
-    records.push(...batch.filter((item) => item.RR === RR));
-    if (pageNumber * 500 >= (response.body?.totalCount || 0)) break;
-  }
-  return records;
-}
-
-export async function ensureCname(dns, config, domain, target) {
-  const RR = domain.slice(0, -(config.dns.zone.length + 1));
-  const records = await domainRecords(dns, config, RR);
-  if (records.some((item) => item.type !== 'CNAME' || item.line !== 'default') || records.length > 1) throw new Error(`DNS ${domain} has conflicting records; resolve them before deployment`);
-  const record = records[0];
-  if (record?.status === 'DISABLE') throw new Error(`DNS ${domain} is disabled; enable the intended record before deployment`);
-  if (record && record.value.replace(/\.$/, '') !== target) throw new Error(`DNS ${domain} points to another resource; resolve the ownership conflict before deployment`);
-  if (record && record.value.replace(/\.$/, '') === target && record.TTL === config.dns.ttl) return;
-  const values = { RR, type: 'CNAME', value: target, TTL: config.dns.ttl, line: 'default' };
-  if (record) await dns.updateDomainRecord(new DNS.UpdateDomainRecordRequest({ ...values, recordId: record.recordId }));
-  else await dns.addDomainRecord(new DNS.AddDomainRecordRequest({ ...values, domainName: config.dns.zone }));
-}
 
 const xml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]);
 export function websiteXml(spa) {

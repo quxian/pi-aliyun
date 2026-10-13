@@ -8,7 +8,7 @@ import { createPublicKey, sign, verify } from 'node:crypto';
 import acme from 'acme-client';
 import { validateConfig, plan } from '../skills/aliyun/scripts/config.mjs';
 import { collectFiles, createArchive, buildArtifacts } from '../skills/aliyun/scripts/artifacts.mjs';
-import { ensureCname, deployFrontend, bindFrontendDomain, cacheControl, websiteXml } from '../skills/aliyun/scripts/cloud.mjs';
+import { deployFrontend, bindFrontendDomain, cacheControl, websiteXml } from '../skills/aliyun/scripts/cloud.mjs';
 import { uploadPrivateKey } from '../skills/aliyun/scripts/tls.mjs';
 import { deploymentPolicy } from '../skills/aliyun/scripts/policy.mjs';
 import { registerRenewal, renewRegistered, renewalUnits } from '../skills/aliyun/scripts/renewal.mjs';
@@ -74,24 +74,6 @@ try {
   assert.match(websiteXml(true), /<HttpStatus>200<\/HttpStatus>/);
   assert(!websiteXml(false).includes('ErrorDocument'));
   const tls = { certificate: 'mock certificate', privateKey: 'mock private key' };
-
-  const records = [];
-  let dnsWrites = 0;
-  const dns = {
-    describeDomainRecords: async () => ({ body: { totalCount: records.length, domainRecords: { record: records } } }),
-    addDomainRecord: async (value) => { dnsWrites++; records.push({ ...value, recordId: '1', status: 'ENABLE' }); },
-    updateDomainRecord: async (value) => { dnsWrites++; Object.assign(records[0], value); },
-  };
-  await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
-  await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
-  assert.equal(dnsWrites, 1);
-  await assert.rejects(ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com'), /another resource/);
-  assert.equal(dnsWrites, 1);
-  records[0].TTL = config.dns.ttl + 60;
-  await ensureCname(dns, config, 'app.example.com', 'target.aliyuncs.com');
-  assert.equal(dnsWrites, 2);
-  records.push({ RR: 'app', type: 'TXT', line: 'default' });
-  await assert.rejects(ensureCname(dns, config, 'app.example.com', 'new-target.aliyuncs.com'), /conflicting/);
 
   let bucketExists = false;
   let blockPublicAccess = true;

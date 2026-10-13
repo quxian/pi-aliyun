@@ -1,10 +1,10 @@
-import { inspectBackend, inspectCodeBucket, deleteBackendStack, backendNames } from './ros.mjs';
-import * as DNS from '@alicloud/alidns20150109';
+import { inspectApplicationStack, inspectCodeBucket, deleteApplicationStack, applicationNames } from './ros.mjs';
+import { dnsTargets, inspectDnsRecord } from './dns.mjs';
 import * as OTS from '@alicloud/tablestore20201209';
 import * as RAM from '@alicloud/ram20150501';
 import * as CAS from '@alicloud/cas20200407';
 import { setTimeout as delay } from 'node:timers/promises';
-import { domainRecords, isMissing } from './cloud.mjs';
+import { isMissing } from './cloud.mjs';
 import { databaseNames } from './database-plan.mjs';
 import { createDatabaseClients, getInstance } from './database.mjs';
 import { readResources, saveResources } from './resources.mjs';
@@ -16,8 +16,6 @@ const missing = error => isMissing(error) || ['EntityNotExist.Role', 'EntityNotE
 const ensure = (condition, message) => { if (!condition) throw new Error(message); };
 const array = value => value === undefined ? [] : Array.isArray(value) ? value : [value];
 const decodePolicy = value => { try { return JSON.parse(value); } catch { return JSON.parse(decodeURIComponent(value)); } };
-export const dnsTargets = config => [config.frontend && { domain: config.frontend.domain, value: `${config.frontend.bucket}.oss-${config.region}.aliyuncs.com` },
-  config.backend && { domain: config.backend.domain, value: `${config.accountId}.${config.region}.fc.aliyuncs.com` }].filter(Boolean);
 
 export async function inspectApplication(clients, config, configPath, { database = config.database && createDatabaseClients(config, clients.credential) } = {}) {
   const inventory = await readResources(config, configPath);
@@ -26,9 +24,10 @@ export async function inspectApplication(clients, config, configPath, { database
     try { const detail = await run(); checks.push({ component, exists: true, ok: true, ...detail }); }
     catch (error) { checks.push(missing(error) ? { component, exists: false, ok: false } : { component, ok: false, error: errorInfo(error) }); }
   };
+  await inspect('application-stack', () => inspectApplicationStack(clients.ros, config));
+  const stackCheck = checks.find(check => check.component === 'application-stack');
   const tasks = [];
   if (config.backend) {
-    tasks.push(inspect('backend-stack', () => inspectBackend(clients.ros, config)));
     tasks.push(inspect('code-bucket', () => inspectCodeBucket(clients.codeOss, config)));
   }
   if (config.frontend) tasks.push(inspect('bucket', async () => {
@@ -39,9 +38,8 @@ export async function inspectApplication(clients, config, configPath, { database
     return { name: bucket, location: info.bucket.Location };
   }));
   for (const target of dnsTargets(config)) tasks.push(inspect(`dns:${target.domain}`, async () => {
-    const records = await domainRecords(clients.dns, config, target.domain.slice(0, -(config.dns.zone.length + 1)));
-    ensure(records.every(record => record.type === 'CNAME' && record.value.replace(/\.$/, '') === target.value && record.line === 'default'), `DNS ${target.domain} points outside this application`);
-    return { exists: records.length > 0, ok: records.length === 1 && records[0].status === 'ENABLE', records: records.map(({ recordId, RR, type, value, status }) => ({ recordId, RR, type, value, status })) };
+    ensure(!stackCheck.error, 'Cannot verify DNS ownership because the ROS stack could not be inspected');
+    return inspectDnsRecord(clients.dns, config, target, stackCheck.dnsResources?.[target.logicalId]);
   }));
   if (database) {
     const names = databaseNames(config);
@@ -102,12 +100,12 @@ export async function planDestroy(clients, config, configPath, options = {}) {
     const result = await clients.oss.request({ method: 'GET', bucket: config.frontend.bucket, subres: 'cname', xmlResponse: true, successStatuses: [200] });
     ensure(array(result.data?.Cname).every(item => item.Domain === config.frontend.domain), 'Bucket has additional domain bindings');
   });
-  if (get('backend-stack')?.exists) await inspect('backend-stack', async () => {
-    ensure(!config.backend.vpcConfig, 'Custom VPC resources require a separate teardown plan');
-    ensure(!get('backend-stack').state.endsWith('_IN_PROGRESS') || get('backend-stack').state === 'DELETE_IN_PROGRESS', 'ROS deployment is still running');
+  if (get('application-stack')?.exists) await inspect('application-stack', async () => {
+    ensure(!config.backend?.vpcConfig, 'Custom VPC resources require a separate teardown plan');
+    ensure(!get('application-stack').state.endsWith('_IN_PROGRESS') || get('application-stack').state === 'DELETE_IN_PROGRESS', 'ROS deployment is still running');
   });
   if (get('code-bucket')?.exists) await inspect('code-bucket', async () => {
-    const version = await clients.codeOss.getBucketVersioning(backendNames(config).codeBucket);
+    const version = await clients.codeOss.getBucketVersioning(applicationNames(config).codeBucket);
     ensure(!version.versionStatus, 'Versioned backend code bucket requires a retention decision');
     let continuation;
     do {
@@ -135,11 +133,8 @@ export async function destroyApplication(clients, config, configPath, { confirm,
   const get = name => plan.checks.find(check => check.component === name);
   await saveResources(config, configPath, { state: 'deleting' });
   await unregisterRenewal(configPath, registry);
-  for (const target of dnsTargets(config)) for (const record of get(`dns:${target.domain}`).records || []) {
-    await operation(`Delete DNS ${target.domain}`, () => clients.dns.deleteDomainRecord(new DNS.DeleteDomainRecordRequest({ recordId: record.recordId })));
-  }
-  if (get('backend-stack')?.exists) await operation('Delete backend ROS stack', () => deleteBackendStack(clients.ros, config));
-  if (get('code-bucket')?.exists) await operation('Delete backend code bucket', () => emptyBucket(clients.codeOss, backendNames(config).codeBucket));
+  if (get('application-stack')?.exists) await operation('Delete application ROS stack and DNS', () => deleteApplicationStack(clients.ros, config));
+  if (get('code-bucket')?.exists) await operation('Delete backend code bucket', () => emptyBucket(clients.codeOss, applicationNames(config).codeBucket));
   if (get('bucket')?.exists) await operation('Empty and delete application bucket', () => emptyBucket(clients.oss, config.frontend.bucket));
   if (database) {
     const names = databaseNames(config);

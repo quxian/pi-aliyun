@@ -1,7 +1,7 @@
 import { mkdir, writeFile, rename, readFile } from 'node:fs/promises';
 import { X509Certificate, createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { backendNames } from './ros.mjs';
+import { applicationNames } from './ros.mjs';
 import { databaseNames } from './database-plan.mjs';
 
 export function certificateIdentity(pem) {
@@ -16,9 +16,9 @@ export function certificateIdentity(pem) {
 export function resourceManifest(config) {
   const names = config.database ? databaseNames(config) : undefined;
   return {
-    version: 1, project: config.project, accountId: config.accountId, region: config.region,
+    version: 2, ros: { stackName: applicationNames(config).stackName }, project: config.project, accountId: config.accountId, region: config.region,
     frontend: config.frontend ? { bucket: config.frontend.bucket, domain: config.frontend.domain } : undefined,
-    backend: config.backend ? { ...backendNames(config), functionName: config.backend.functionName, domain: config.backend.domain, role: config.backend.role } : undefined,
+    backend: config.backend ? { ...applicationNames(config), functionName: config.backend.functionName, domain: config.backend.domain, role: config.backend.role } : undefined,
     database: config.database ? {
       instance: config.database.instance, ownerProject: names.ownerProject,
       shared: config.database.shared, role: names.roleName, policy: names.policyName, tables: config.database.tables.map(table => names.prefix + table.name),
@@ -35,8 +35,9 @@ export async function readResources(config, configPath) {
   for (const [section, keys] of [['frontend', ['bucket', 'domain']], ['backend', ['functionName', 'domain']], ['database', ['instance']]]) {
     if (saved[section] && keys.some(key => saved[section][key] !== config[section]?.[key])) throw new Error(`Existing ${section} resources differ from configuration. Manage the old resources with their original config before changing identity.`);
   }
-  if (saved.backend && saved.backend.stackName !== backendNames(config).stackName) {
-    throw new Error('This application has an older backend outside ROS. Handle its existing FC resources explicitly before using the ROS deployment commands; do not delete the inventory to bypass this check.');
+  if (saved.version !== 2) throw new Error('This application has an older resource inventory outside the current ROS deployment. Handle its existing resources explicitly; do not delete the inventory to bypass ownership checks.');
+  if (saved.ros?.stackName !== applicationNames(config).stackName) {
+    throw new Error('Application ROS stack identity differs from configuration; manage the existing resources with their original config.');
   }
   return saved;
 }

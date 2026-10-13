@@ -115,7 +115,7 @@ export async function inspectConnection({ selection, region = 'cn-hangzhou' } = 
         region: `oss-${region}`, secure: true, authorizationV4: true, timeout: 15000 });
       await oss.listBuckets({ 'max-keys': 1 });
     } },
-    { service: 'ros', action: 'ros:ListStacks', message: 'FC 通过阿里云资源编排（ROS）部署；已验证资源栈读取，实际部署权限在发布时验证。', run: () => ros.listStacks(new ROS.ListStacksRequest({ regionId: region, pageSize: 1 })) },
+    { service: 'ros', action: 'ros:ListStacks', message: 'FC 和项目域名解析通过阿里云资源编排（ROS）部署；已验证资源栈读取，实际部署权限在发布时验证。', run: () => ros.listStacks(new ROS.ListStacksRequest({ regionId: region, pageSize: 1 })) },
     { service: 'ots', action: 'ots:ListInstance', run: () => ots.listInstances(new OTS.ListInstancesRequest({ maxResults: 1 })) },
     { service: 'cas', action: 'yundun-cert:ListUserCertificateOrder', run: () => cas.listUserCertificateOrder(new CAS.ListUserCertificateOrderRequest({ currentPage: 1, showSize: 1 })) },
     { service: 'ram', action: 'ram:ListPolicies', run: () => ram.listPolicies(new RAM.ListPoliciesRequest({ policyType: 'Custom', maxItems: 1 })) },

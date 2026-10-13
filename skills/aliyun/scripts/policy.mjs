@@ -13,8 +13,8 @@ export function deploymentPolicy(profile) {
   return { Version: '1', Statement: [
     allow(['oss:GetBucketInfo', 'oss:GetBucketAcl', 'oss:GetBucketTagging', 'oss:PutBucket', 'oss:PutBucketTagging', 'oss:PutBucketAcl', 'oss:PutBucketPublicAccessBlock', 'oss:PutBucketWebsite', 'oss:CreateCnameToken', 'oss:PutCname', 'oss:ListCname', 'oss:GetBucketVersioning', 'oss:ListObjects', 'oss:ListMultipartUploads', 'oss:DeleteBucket'], `acs:oss:*:${account}:${buckets}`),
     allow(['oss:GetObject', 'oss:PutObject', 'oss:DeleteObject', 'oss:AbortMultipartUpload'], `acs:oss:*:${account}:${buckets}/*`),
-    allow(['alidns:DescribeDomainRecords', 'alidns:AddDomainRecord', 'alidns:UpdateDomainRecord', 'alidns:DeleteDomainRecord'], `acs:alidns::${account}:domain/${zone}`),
-    allow(['ros:CreateStack', 'ros:UpdateStack', 'ros:DeleteStack', 'ros:GetStack', 'ros:GetTemplate', 'ros:ListStackEvents'], `acs:ros:${region}:${account}:stack/*`),
+    allow(['alidns:DescribeDomainRecords', 'alidns:DescribeDomainRecordInfo', 'alidns:AddDomainRecord', 'alidns:UpdateDomainRecord', 'alidns:DeleteDomainRecord'], `acs:alidns::${account}:domain/${zone}`),
+    allow(['ros:CreateStack', 'ros:UpdateStack', 'ros:DeleteStack', 'ros:GetStack', 'ros:GetTemplate', 'ros:ListStackEvents', 'ros:ListStackResources'], `acs:ros:${region}:${account}:stack/*`),
     allow(['ros:ListStacks'], '*'),
     // ROS acts with this identity's permissions; FC actions are still required.
     // Some FC deployment APIs require account-level authorization.

@@ -153,7 +153,10 @@ try {
   await registerRenewal(join(temp, 'aliyun.json'), registry);
   await registerRenewal(otherConfig, registry);
   const renewed = [];
-  await assert.rejects(renewRegistered(registry, { run: async (path) => { renewed.push(path); if (renewed.length === 1) throw new Error('simulated failure'); } }), /1 certificate/);
+  const renewalReport = await renewRegistered(registry, { run: async (path) => { renewed.push(path); if (renewed.length === 1) throw new Error('simulated failure'); } });
+  assert.equal(renewalReport.ok, false);
+  assert.deepEqual(renewalReport.projects.map(project => project.status), ['error', 'ok']);
+  assert.equal(renewalReport.projects[0].error.message, 'simulated failure');
   assert.deepEqual(renewed, [join(temp, 'aliyun.json'), otherConfig]);
   const units = renewalUnits({ user: 'deploy-user', registryPath: registry });
   assert.match(units['pi-aliyun-renew.service'], /User=deploy-user/);

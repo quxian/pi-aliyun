@@ -41,7 +41,7 @@ function projectDatabase(p, project, shared) {
 
 export function checkAccountProject(p, config) {
   const expected = projectDatabase(p, config.project, config.database?.shared);
-  if (config.accountId !== p.accountId || config.region !== p.region || (p.zone !== undefined && config.dns?.zone !== p.zone)) throw new Error('Project account, region or DNS zone differs from the configured account');
+  if (config.accountId !== p.accountId) throw new Error('Project account differs from the connected account');
   if (config.frontend && config.frontend.bucket !== `${config.project}-${p.accountId}`) throw new Error('Application bucket must be <project>-<accountId>');
   if (config.backend && config.backend.functionName !== config.project) throw new Error('Application functionName must equal project');
   if (config.database && config.database.instance !== expected.instanceName) throw new Error('Application database must use its own instance; sharing requires database.shared with an ownerProject and reason');
@@ -59,7 +59,6 @@ export async function checkPersistentProject(_account, path) {
 export function accountZone(p, zone = p.zone) {
   if (!zone) throw new Error('The account is connected, but a website needs a DNS zone. Supply --zone example.com from the task or set a default domain in Client Pi connections.');
   if (typeof zone !== 'string' || !/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/.test(zone)) throw new Error('Use a lowercase DNS zone such as example.com');
-  if (p.zone && zone !== p.zone) throw new Error('The requested DNS zone differs from the configured account; confirm and update the deployment defaults first');
   return zone;
 }
 

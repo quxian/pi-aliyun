@@ -36,9 +36,11 @@ export async function readResources(config, configPath) {
     if (saved[section] && keys.some(key => saved[section][key] !== config[section]?.[key])) throw new Error(`Existing ${section} resources differ from configuration. Manage the old resources with their original config before changing identity.`);
   }
   if (saved.version !== 2) throw new Error('This application has an older resource inventory outside the current ROS deployment. Handle its existing resources explicitly; do not delete the inventory to bypass ownership checks.');
-  if (saved.ros?.stackName !== applicationNames(config).stackName) {
-    throw new Error('Application ROS stack identity differs from configuration; manage the existing resources with their original config.');
-  }
+  if (!/^pi-aliyun-[a-z0-9-]+$/.test(saved.ros?.stackName || '')
+    || (saved.backend?.codeBucket && !new RegExp(`^pi-aliyun-code-[a-f0-9]{16}-${config.accountId}$`).test(saved.backend.codeBucket))) throw new Error('Invalid recorded application resource identity');
+  // Resource identities are fixed at first deployment, independent of later components.
+  // Keep the recorded stack/bucket instead of recomputing or moving live resources.
+  config.rosIdentity = { stackName: saved.ros.stackName, ...(saved.backend?.codeBucket ? { codeBucket: saved.backend.codeBucket } : {}) };
   return saved;
 }
 

@@ -1,14 +1,35 @@
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { readFile, mkdir, writeFile, rename, realpath, rm } from 'node:fs/promises';
+import { randomUUID, X509Certificate } from 'node:crypto';
+import lockfile from 'proper-lockfile';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { loadConfig } from './config.mjs';
+import { loadAccount, checkAccountProject, checkPersistentProject } from './account.mjs';
+import { errorInfo } from './errors.mjs';
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 export const defaultRegistry = () => resolve(homedir(), '.config/pi-aliyun/renewal.json');
+
+async function updateRegistry(registryPath, update) {
+  await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
+  // Canonicalize the parent even before the registry exists, so path aliases share one lock.
+  const path = resolve(await realpath(dirname(registryPath)), basename(registryPath));
+  const release = await lockfile.lock(path, { realpath: false, retries: { retries: 150, factor: 1, minTimeout: 100, maxTimeout: 100 } });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    const registry = await readRegistry(path, true);
+    update(registry);
+    await writeFile(temporary, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+    await release();
+  }
+}
 
 function connectionEnvironment(connection) {
   if (connection === undefined) return {};
@@ -33,48 +54,69 @@ export async function registerRenewal(configPath, registryPath = defaultRegistry
   const path = resolve(configPath);
   const config = await loadConfig(path);
   if (!config.tls.acme || !config.tls.acme.agreeToTerms) throw new Error('Scheduled renewal requires ACME configuration and accepted CA terms');
-  const registry = await readRegistry(registryPath, true);
-  if (process.env.PI_ALIYUN_CONNECTION_FILE || process.env.PI_ALIYUN_ACCOUNT_FILE) {
-    const connection = { credentialFile: process.env.PI_ALIYUN_CONNECTION_FILE, accountFile: process.env.PI_ALIYUN_ACCOUNT_FILE };
-    connectionEnvironment(connection);
-    registry.connection = connection;
-  }
-  registry.projects = [...new Set([...registry.projects, path])];
-  await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
-  const temporary = `${registryPath}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
-  await rename(temporary, registryPath);
+  await updateRegistry(registryPath, registry => {
+    if (process.env.PI_ALIYUN_CONNECTION_FILE || process.env.PI_ALIYUN_ACCOUNT_FILE) {
+      const connection = { credentialFile: process.env.PI_ALIYUN_CONNECTION_FILE, accountFile: process.env.PI_ALIYUN_ACCOUNT_FILE };
+      connectionEnvironment(connection);
+      registry.connection = connection;
+    }
+    registry.projects = [...new Set([...registry.projects, path])];
+  });
   console.log(`Registered certificate renewal: ${path}`);
 }
 
 export async function unregisterRenewal(configPath, registryPath = defaultRegistry()) {
-  const registry = await readRegistry(registryPath, true);
-  registry.projects = registry.projects.filter(path => path !== resolve(configPath));
-  await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
-  const temporary = `${registryPath}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
-  await rename(temporary, registryPath);
+  await updateRegistry(registryPath, registry => {
+    registry.projects = registry.projects.filter(path => path !== resolve(configPath));
+  });
 }
 
-async function runRenewal(configPath, environment, signal) {
+export async function renewProject(configPath) {
+  const result = { configPath: resolve(configPath), project: basename(dirname(configPath)), domains: [], checkedAt: new Date().toISOString() };
   try {
-    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { env: environment, signal, timeout: 900_000, maxBuffer: 1024 * 1024 });
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
+    const config = await loadConfig(configPath);
+    result.project = config.project;
+    result.domains = [config.frontend?.domain, config.backend?.domain].filter(Boolean);
+    const account = await loadAccount();
+    checkAccountProject(account, config);
+    await checkPersistentProject(account, configPath);
+    const { readResources, saveResources } = await import('./resources.mjs');
+    await readResources(config, configPath);
+    const { prepareTls } = await import('./tls.mjs');
+    const { createClients, bindFrontendDomain } = await import('./cloud.mjs');
+    const { renewBackendCertificate } = await import('./ros.mjs');
+    const tls = await prepareTls(config);
+    await saveResources(config, configPath, { state: 'renewing' });
+    const clients = await createClients(config);
+    if (config.frontend) await bindFrontendDomain(clients.oss, config, tls, { dns: clients.dns });
+    if (config.backend) await renewBackendCertificate(clients.ros, config, tls);
+    await saveResources(config, configPath, { state: 'renewed' });
+    return { ...result, checkedAt: new Date().toISOString(), status: 'ok', expiresAt: new Date(new X509Certificate(tls.certificate).validTo).toISOString() };
   } catch (error) {
-    // The child CLI already redacts SDK errors; never print execFile's full error or environment.
-    if (error.stdout) process.stdout.write(error.stdout);
-    if (error.stderr) process.stderr.write(error.stderr);
-    throw new Error(error.killed ? 'renewal was interrupted or exceeded 15 minutes' : 'renewal command failed');
+    return { ...result, checkedAt: new Date().toISOString(), status: 'error', error: errorInfo(error) };
   }
 }
 
+async function runRenewal(configPath, environment, signal) {
+  let output;
+  try {
+    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath, '--json'], { env: environment, signal, timeout: 900_000, maxBuffer: 1024 * 1024 });
+    output = result.stdout;
+  } catch (error) {
+    // Never expose execFile errors or raw progress logs; only the CLI's safe result is public.
+    if (signal.aborted) throw signal.reason;
+    if (!error.stdout) throw new Error(error.killed ? '续期任务超时，请重试此应用。' : '续期进程未完成，请重试此应用。');
+    output = error.stdout;
+  }
+  const result = JSON.parse(output);
+  if (!['ok', 'error'].includes(result.status) || result.configPath !== resolve(configPath)) throw new Error('续期进程返回了无效结果。');
+  return result;
+}
+
 export async function renewRegistered(registryPath = defaultRegistry(), { run = runRenewal } = {}) {
-  const registry = await readRegistry(registryPath);
-  // Schedulers do not inherit the Agent worker's environment. Store file paths,
-  // not credentials, so renewals keep using the connection chosen at deployment.
+  const registry = await readRegistry(registryPath, true);
   const environment = { ...process.env, ...connectionEnvironment(registry.connection) };
-  const failures = [];
+  const projects = [];
   const controller = new AbortController();
   const cancel = () => controller.abort();
   process.once('SIGTERM', cancel);
@@ -82,16 +124,21 @@ export async function renewRegistered(registryPath = defaultRegistry(), { run = 
   try {
     for (const path of [...new Set(registry.projects)]) {
       controller.signal.throwIfAborted();
-      console.log(`Checking scheduled certificate: ${path}`);
-      try { await run(path, environment, controller.signal); }
-      catch { failures.push(path); console.error(`Scheduled certificate check failed: ${path}`); }
+      let info = { configPath: path, project: basename(dirname(path)), domains: [], checkedAt: new Date().toISOString() };
+      try {
+        const config = await loadConfig(path);
+        info = { ...info, project: config.project, domains: [config.frontend?.domain, config.backend?.domain].filter(Boolean) };
+        projects.push(await run(path, environment, controller.signal) ?? { ...info, status: 'ok' });
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        projects.push({ ...info, status: 'error', error: errorInfo(error) });
+      }
     }
   } finally {
     process.removeListener('SIGTERM', cancel);
     process.removeListener('SIGINT', cancel);
   }
-  if (failures.length) throw new Error(`${failures.length} certificate check(s) failed; inspect the preceding project logs`);
-  console.log(`Scheduled certificate checks completed: ${registry.projects.length} project(s)`);
+  return { checkedAt: new Date().toISOString(), ok: projects.every(project => project.status === 'ok'), projects };
 }
 
 function quote(value) {

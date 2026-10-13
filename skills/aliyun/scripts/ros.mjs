@@ -10,8 +10,8 @@ const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
 const ref = name => ({ Ref: name });
 
 export function applicationNames(config) {
-  const hash = createHash('sha256').update(`${config.accountId}:${config.region}:${config.project}:${config.backend?.functionName || 'frontend'}`).digest('hex').slice(0, 16);
-  return { stackName: `pi-aliyun-${config.backend ? 'fc' : 'site'}-${hash}`, codeBucket: `pi-aliyun-code-${hash}-${config.accountId}` };
+  const hash = createHash('sha256').update(`${config.accountId}:${config.region}:${config.project}`).digest('hex').slice(0, 16);
+  return { stackName: `pi-aliyun-app-${hash}`, codeBucket: `pi-aliyun-code-${hash}-${config.accountId}`, ...config.rosIdentity };
 }
 
 export function createRosClient(credential) {
@@ -77,18 +77,25 @@ export async function findApplicationStack(ros, config) {
   return stack;
 }
 
-export async function readApplicationTemplate(ros, config, stack) {
+export async function readApplicationTemplate(ros, config, stack, { allowAdditions = false } = {}) {
   const { body } = await ros.getTemplate(new ROS.GetTemplateRequest({ regionId: config.region, stackId: stack.stackId, templateStage: 'Original' }));
   const template = typeof body.templateBody === 'string' ? JSON.parse(body.templateBody) : body.templateBody;
   const resources = template?.Resources;
   const types = { ...Object.fromEntries(dnsTargets(config).map(target => [target.logicalId, 'ALIYUN::DNS::DomainRecord'])),
     ...(config.backend ? { Function: 'ALIYUN::FC3::Function', Concurrency: 'ALIYUN::FC3::ConcurrencyConfig', HttpTrigger: 'ALIYUN::FC3::Trigger', Domain: 'ALIYUN::FC3::CustomDomain' } : {}) };
-  ensure(template?.Description === `Managed by pi-aliyun: ${config.project}` && resources
-    && Object.keys(resources).length === Object.keys(types).length && Object.entries(types).every(([name, type]) => resources[name]?.Type === type)
-    && (!config.backend || (resources.Function.Properties.FunctionName === config.backend.functionName
+  const backendResources = ['Function', 'Concurrency', 'HttpTrigger', 'Domain', 'BackendDns'];
+  const hasBackend = backendResources.some(name => resources?.[name]);
+  // Existing resources must retain ownership. A deploy may add a component, but cannot
+  // remove or replace an existing component just by editing its desired configuration.
+  ensure(template?.Description === `Managed by pi-aliyun: ${config.project}` && resources && Object.keys(resources).length > 0
+    && Object.entries(resources).every(([name, resource]) => types[name] === resource.Type)
+    && (allowAdditions || Object.keys(resources).length === Object.keys(types).length)
+    && (!hasBackend || (backendResources.every(name => resources[name]) && config.backend
+      && resources.Function.Properties.FunctionName === config.backend.functionName
       && resources.Function.Properties.Code?.OssBucketName === applicationNames(config).codeBucket
       && resources.Domain.Properties.DomainName === config.backend.domain))
-    && Object.entries(dnsResources(config)).every(([name, resource]) => ['DomainName', 'RR', 'Type', 'Value', 'Line'].every(key => resources[name]?.Properties?.[key] === resource.Properties[key])),
+    && Object.entries(dnsResources(config)).every(([name, resource]) => (!resources[name] && allowAdditions)
+      || ['DomainName', 'RR', 'Type', 'Value', 'Line'].every(key => resources[name]?.Properties?.[key] === resource.Properties[key])),
   'ROS template has different ownership or additional resources; inspect it before changing this application');
   return template;
 }
@@ -158,7 +165,7 @@ export async function deployApplicationStack(clients, config, archive, environme
   const { ros, codeOss } = clients;
   let stack = await findApplicationStack(ros, config);
   if (stack) {
-    await readApplicationTemplate(ros, config, stack);
+    await readApplicationTemplate(ros, config, stack, { allowAdditions: true });
     if (['ROLLBACK_COMPLETE', 'CREATE_ROLLBACK_COMPLETE'].includes(stack.status)) {
       await deleteApplicationStack(ros, config, options);
       stack = undefined;
@@ -199,7 +206,7 @@ export async function stackDnsResources(ros, config, stack) {
 export async function checkApplicationDns(clients, config) {
   const stack = await findApplicationStack(clients.ros, config);
   if (stack) {
-    await readApplicationTemplate(clients.ros, config, stack);
+    await readApplicationTemplate(clients.ros, config, stack, { allowAdditions: true });
     ensure(!stack.status.endsWith('_IN_PROGRESS'), 'ROS deployment is still running');
   }
   const resources = await stackDnsResources(clients.ros, config, stack);

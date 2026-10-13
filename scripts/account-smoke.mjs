@@ -74,7 +74,9 @@ try {
   assert.equal(adopted.backend.cpu, config.backend.cpu);
   assert.equal(adopted.tls.acme.agreeToTerms, true);
   assert.match(await readFile(join(existing, '.gitignore'), 'utf8'), /custom-build/);
-  assert.throws(() => checkAccountProject(p, { ...config, region: 'cn-hangzhou' }), /differs/);
+  checkAccountProject({ ...p, region: 'cn-hangzhou', zone: 'new.example.com' }, config);
+  await initProject(p, 'pi-aliyun-other-zone', undefined, 'other.example.com');
+  assert.throws(() => checkAccountProject({ ...p, accountId: '9999999999999999' }, config), /account differs/);
   assert.throws(() => checkAccountProject(p, { ...config, frontend: { ...config.frontend, bucket: 'another-application' } }), /bucket/);
   assert.throws(() => checkAccountProject(p, { ...config, backend: { ...config.backend, functionName: 'another-application' } }), /functionName/);
 

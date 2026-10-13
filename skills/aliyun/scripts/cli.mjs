@@ -9,6 +9,9 @@ import { verifyApplication } from './verify.mjs';
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  const json = ['renew', 'renew-all'].includes(command) && args.includes('--json');
+  if (json) console.log = (...values) => console.error(...values);
+  const report = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
   if (command === 'connection') {
     if (args.length) throw new Error('connection accepts its optional credential selection as JSON on stdin');
     let input = '';
@@ -21,25 +24,29 @@ async function main() {
     return;
   }
   if (!command || ['help', '--help', '-h'].includes(command)) {
-    console.log('pi-aliyun init --project pi-aliyun-name [--profile path] [--config existing-project/aliyun.json] [--zone example.com]\npi-aliyun <doctor|plan|build|deploy|status|diagnose|verify|renew|db-plan|db-inspect|db-setup> [--config aliyun.json]\npi-aliyun destroy [--config aliyun.json] [--confirm exact-project-name]\npi-aliyun account [--profile path]\npi-aliyun policy [--profile path] [--zone example.com]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path]\npi-aliyun install-renewal --user service-user --registry path\ninit always inherits the account. destroy without --confirm is read-only.');
+    console.log('pi-aliyun init --project pi-aliyun-name [--profile path] [--config existing-project/aliyun.json] [--zone example.com]\npi-aliyun <doctor|plan|build|deploy|status|diagnose|verify|renew|db-plan|db-inspect|db-setup> [--config aliyun.json]\npi-aliyun destroy [--config aliyun.json] [--confirm exact-project-name]\npi-aliyun account [--profile path]\npi-aliyun policy [--profile path] [--zone example.com]\npi-aliyun schedule --config aliyun.json [--registry path]\npi-aliyun renew-all [--registry path] [--json]\npi-aliyun install-renewal --user service-user --registry path\ninit always inherits the account. destroy without --confirm is read-only.');
     return;
   }
   const accountCommands = { account: ['profile'], policy: ['profile', 'zone'], init: ['profile', 'project', 'config', 'zone'] };
   const commands = {
     ...accountCommands,
     doctor: ['config'], plan: ['config'], build: ['config'], deploy: ['config'],
-    status: ['config'], diagnose: ['config'], verify: ['config'], renew: ['config'],
+    status: ['config'], diagnose: ['config'], verify: ['config'], renew: ['config', 'json'],
     'db-plan': ['config'], 'db-inspect': ['config'], 'db-setup': ['config'],
     destroy: ['config', 'confirm'], schedule: ['config', 'registry'],
-    'renew-all': ['registry'], 'install-renewal': ['user', 'registry'],
+    'renew-all': ['registry', 'json'], 'install-renewal': ['user', 'registry'],
   };
   if (!Object.hasOwn(commands, command)) throw new Error('Unknown command; use --help');
   const allowed = commands[command];
   const options = {};
-  for (let i = 0; i < args.length; i += 2) {
+  for (let i = 0; i < args.length; i++) {
     const name = args[i].slice(2);
-    if (!args[i].startsWith('--') || !allowed.includes(name) || !args[i + 1] || Object.hasOwn(options, name)) throw new Error('Invalid or duplicate argument; use --help');
-    options[name] = args[i + 1];
+    if (!args[i].startsWith('--') || !allowed.includes(name) || Object.hasOwn(options, name)) throw new Error('Invalid or duplicate argument; use --help');
+    if (name === 'json') options[name] = true;
+    else {
+      if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Argument value is missing; use --help');
+      options[name] = args[++i];
+    }
   }
   const path = resolve(options.config || 'aliyun.json');
   if (accountCommands[command]) {
@@ -59,16 +66,27 @@ async function main() {
       if (account) { checkAccountProject(account, await loadConfig(path)); await checkPersistentProject(account, path); }
       await registerRenewal(path, registry);
     }
-    else if (command === 'renew-all') await renewRegistered(registry);
+    else if (command === 'renew-all') {
+      const result = await renewRegistered(registry);
+      report(result);
+      if (!result.ok) process.exitCode = 1;
+    }
     else {
       if (!options.registry || !options.user) throw new Error('install-renewal requires --user and --registry');
       await installRenewalTimer(options.user, registry);
     }
     return;
   }
+  if (command === 'renew') {
+    const { renewProject } = await import('./renewal.mjs');
+    const result = await renewProject(path);
+    report(result);
+    if (result.status !== 'ok') process.exitCode = 1;
+    return;
+  }
   const config = await loadConfig(path);
   const account = await loadAccount(undefined, { optional: true });
-  if (['deploy', 'db-setup', 'renew', 'status', 'diagnose', 'verify', 'destroy'].includes(command)) {
+  if (['deploy', 'db-setup', 'status', 'diagnose', 'verify', 'destroy'].includes(command)) {
     if (!account) throw new Error('Configure the account once before cloud operations; use account and policy');
     checkAccountProject(account, config);
     await checkPersistentProject(account, path);
@@ -90,8 +108,8 @@ async function main() {
     console.log(`Local artifacts ready: ${artifacts.frontendFiles?.length || 0} frontend files; ${artifacts.backendArchive?.length || 0} backend ZIP bytes.`);
     if (command === 'build') return;
   }
-  const { createClients, deployFrontend, bindFrontendDomain } = await import('./cloud.mjs');
-  const { deployApplicationStack, checkApplicationDns, renewBackendCertificate } = await import('./ros.mjs');
+  const { createClients, deployFrontend } = await import('./cloud.mjs');
+  const { deployApplicationStack, checkApplicationDns } = await import('./ros.mjs');
   if (['status', 'diagnose', 'destroy'].includes(command)) {
     const clients = await createClients(config, { services: ['dns', 'ros', 'oss', 'cas'] });
     const { inspectApplication, planDestroy, destroyApplication } = await import('./operations.mjs');
@@ -129,16 +147,6 @@ async function main() {
     return;
   }
   const { prepareTls } = await import('./tls.mjs');
-  if (command === 'renew') {
-    const tls = await prepareTls(config);
-    await saveResources(config, path, { state: 'renewing' });
-    const clients = await createClients(config);
-    if (config.frontend) await bindFrontendDomain(clients.oss, config, tls, { dns: clients.dns });
-    if (config.backend) await renewBackendCertificate(clients.ros, config, tls);
-    await saveResources(config, path, { state: 'renewed' });
-    console.log('TLS checked and uploaded to configured OSS/FC domains. No application build or deployment was run.');
-    return;
-  }
   const clients = await createClients(config);
   await checkApplicationDns(clients, config);
   await saveResources(config, path, { state: 'deploying' });

@@ -44,7 +44,7 @@ FC 后端统一通过阿里云资源编排 ROS 管理，复用现有浏览器授
 }
 ```
 
-`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。`zone` 可暂缺，发布网站时使用任务指定域名或保存默认域名；已保存的域名仍会用于核对项目配置。`acmeEmail` 可选。`acmeTermsAccepted` 只在用户已同意所选 CA 条款后设置，新应用继承这一同意。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
+`projectRoot` 是新项目默认存放位置，由服务用户拥有；已有项目可留在其它持久目录。`zone` 可暂缺，发布网站时使用任务指定域名或保存默认域名；地域和域名只作为新项目默认值，修改后不影响已有项目的部署、查询和续期。`acmeEmail` 可选。`acmeTermsAccepted` 只在用户已同意所选 CA 条款后设置，新应用继承这一同意。源码、项目配置、业务秘密和证书私钥不放在能力包安装目录或临时会话目录。需要代理访问证书服务时，可增加 `acmeProxyUrl`，例如 `http://127.0.0.1:7890`，不在 URL 中放密码。
 
 凭据由官方 [credentials SDK](https://github.com/aliyun/credentials-nodejs) 读取：推荐为部署主机配置 RAM 角色，也可使用 SDK 凭据文件或环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`，临时凭据再加 `ALIBABA_CLOUD_SECURITY_TOKEN`。SDK 默认凭据文件是该服务用户的 `~/.alibabacloud/credentials`，可用 `ALIBABA_CLOUD_CREDENTIALS_FILE` 指定其它路径；文件应只允许该用户读取。凭据属于**执行部署的主机和服务用户**，不是浏览器，也不写入上述 JSON。
 
@@ -72,7 +72,7 @@ pi-aliyun plan
 pi-aliyun deploy
 ```
 
-`init` 是唯一初始化入口，继承账号、地域、域名、低规格默认值和 CA 同意，不生成业务代码。为尚无部署配置的已有项目执行 `init --project pi-aliyun-myapp --config /path/to/project/aliyun.json`；已有 `.gitignore` 会保留。更新应用直接复用已有配置，`init` 会拒绝覆盖它。每个项目的 `aliyun.json` 使用相对于自身的路径；其它命令通过 `--config` 指向它。
+`init` 是唯一初始化入口，继承账号、地域、域名、低规格默认值和 CA 同意，不生成业务代码。为尚无部署配置的已有项目执行 `init --project pi-aliyun-myapp --config /path/to/project/aliyun.json`；已有 `.gitignore` 会保留。更新应用直接复用已有配置，`init` 会拒绝覆盖它。已有静态站点可以新增后端，已有后端可以新增前端，继续使用原 ROS 栈；已有组件的名称和域名不能通过编辑配置直接替换或移除。每个项目的 `aliyun.json` 使用相对于自身的路径；其它命令通过 `--config` 指向它。
 
 | 配置 | 用途 |
 | --- | --- |
@@ -137,7 +137,7 @@ pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json --confirm p
 
 仅在用户同意 CA 条款后设置 `agreeToTerms`，既有同意可按范围沿用。默认使用 Let's Encrypt，通过 DNS-01 签发；OSS 域名验证也自动完成，只清理本次创建的临时 TXT 记录。有效证书直接复用，进入续期窗口再签发。私钥保存在持久私有目录，不提交 Git、不上传到前端或后端产物。
 
-配置账号并启用 ACME 的项目在部署后自动登记续期。Client Pi 在运行期间每 6 小时检查一次，启动后也会补查，本地与服务器无需额外安装；本地电脑关机或 Client Pi 停止期间无法续期。独立使用 CLI 的长期运行主机可由管理员安装以下定时器，不要与 Client Pi 重复调度：
+配置账号并启用 ACME 的项目在部署后自动登记续期，多个 Agent 并发登记不会互相覆盖。`renew --json` 和 `renew-all --json` 返回各应用的域名、成功确认的证书到期时间及安全错误信息；某个应用失败不会跳过其它应用，存在失败时退出码为 1。Client Pi 连接页展示最近检查、最近成功时间和需要处理的应用；“检查连接”可立即重试。Client Pi 在运行期间每 6 小时检查一次，启动后也会补查，本地与服务器无需额外安装；本地电脑关机或 Client Pi 停止期间无法续期。独立使用 CLI 的长期运行主机可由管理员安装以下定时器，不要与 Client Pi 重复调度：
 
 ```sh
 # 部署服务用户执行

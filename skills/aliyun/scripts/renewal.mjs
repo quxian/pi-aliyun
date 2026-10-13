@@ -10,11 +10,22 @@ const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('./cli.mjs', import.meta.url));
 export const defaultRegistry = () => resolve(homedir(), '.config/pi-aliyun/renewal.json');
 
+function connectionEnvironment(connection) {
+  if (connection === undefined) return {};
+  if (!connection || typeof connection !== 'object' || Array.isArray(connection)
+    || Object.keys(connection).some(key => !['credentialFile', 'accountFile'].includes(key))
+    || [connection.credentialFile, connection.accountFile].some(path => typeof path !== 'string' || !isAbsolute(path) || /[\r\n\0]/.test(path))) {
+    throw new Error('Renewal connection must contain absolute credentialFile and accountFile paths');
+  }
+  return { PI_ALIYUN_CONNECTION_FILE: connection.credentialFile, PI_ALIYUN_ACCOUNT_FILE: connection.accountFile };
+}
+
 async function readRegistry(path, allowMissing = false) {
   let value;
   try { value = JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { if (allowMissing && error.code === 'ENOENT') return { version: 1, projects: [] }; throw new Error(`Cannot read renewal registry: ${path}`); }
   if (value.version !== 1 || !Array.isArray(value.projects) || value.projects.some((entry) => typeof entry !== 'string' || !isAbsolute(entry))) throw new Error('Renewal registry must contain version: 1 and an array of absolute config paths');
+  connectionEnvironment(value.connection);
   return value;
 }
 
@@ -23,6 +34,11 @@ export async function registerRenewal(configPath, registryPath = defaultRegistry
   const config = await loadConfig(path);
   if (!config.tls.acme || !config.tls.acme.agreeToTerms) throw new Error('Scheduled renewal requires ACME configuration and accepted CA terms');
   const registry = await readRegistry(registryPath, true);
+  if (process.env.PI_ALIYUN_CONNECTION_FILE || process.env.PI_ALIYUN_ACCOUNT_FILE) {
+    const connection = { credentialFile: process.env.PI_ALIYUN_CONNECTION_FILE, accountFile: process.env.PI_ALIYUN_ACCOUNT_FILE };
+    connectionEnvironment(connection);
+    registry.connection = connection;
+  }
   registry.projects = [...new Set([...registry.projects, path])];
   await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
   const temporary = `${registryPath}.${process.pid}.tmp`;
@@ -40,9 +56,9 @@ export async function unregisterRenewal(configPath, registryPath = defaultRegist
   await rename(temporary, registryPath);
 }
 
-async function runRenewal(configPath) {
+async function runRenewal(configPath, environment) {
   try {
-    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { timeout: 600_000, maxBuffer: 1024 * 1024 });
+    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { env: environment, timeout: 600_000, maxBuffer: 1024 * 1024 });
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   } catch (error) {
@@ -55,10 +71,13 @@ async function runRenewal(configPath) {
 
 export async function renewRegistered(registryPath = defaultRegistry(), { run = runRenewal } = {}) {
   const registry = await readRegistry(registryPath);
+  // Schedulers do not inherit the Agent worker's environment. Store file paths,
+  // not credentials, so renewals keep using the connection chosen at deployment.
+  const environment = { ...process.env, ...connectionEnvironment(registry.connection) };
   const failures = [];
   for (const path of [...new Set(registry.projects)]) {
     console.log(`Checking scheduled certificate: ${path}`);
-    try { await run(path); }
+    try { await run(path, environment); }
     catch { failures.push(path); console.error(`Scheduled certificate check failed: ${path}`); }
   }
   if (failures.length) throw new Error(`${failures.length} certificate check(s) failed; inspect the preceding project logs`);

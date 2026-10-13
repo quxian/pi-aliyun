@@ -142,7 +142,7 @@ sudo systemctl start pi-aliyun-renew.service
 systemctl list-timers pi-aliyun-renew.timer
 ```
 
-每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。包升级保持安装路径；换路径后重新安装定时器。`destroy` 会移除该应用的续期登记。
+每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。Client Pi 登记续期时，会在 registry 保存连接和账号配置的文件路径，调度器无需额外传入 Agent 的环境变量；registry 不保存凭据内容。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。包升级保持安装路径；换路径后重新安装定时器。`destroy` 会移除该应用的续期登记。
 
 ## 运行边界
 

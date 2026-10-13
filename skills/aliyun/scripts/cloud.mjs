@@ -1,5 +1,5 @@
 import { createCredential } from './connection.mjs';
-import FCModule, * as FC from '@alicloud/fc20230330';
+import { createRosClient, backendNames } from './ros.mjs';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
 import STSModule from '@alicloud/sts20150401';
 import OSS from 'ali-oss';
@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { X509Certificate } from 'node:crypto';
 
 const Client = (module) => module.default || module;
-export async function createClients(config, { services = ['dns', 'fc', 'oss'] } = {}) {
+export async function createClients(config, { services = ['dns', 'ros', 'oss'] } = {}) {
   const credential = await createCredential();
   const sts = new (Client(STSModule))({ credential, endpoint: 'sts.cn-hangzhou.aliyuncs.com', protocol: 'https' });
   let identity;
@@ -21,17 +21,16 @@ export async function createClients(config, { services = ['dns', 'fc', 'oss'] } 
     clients.cas = new (Client(CASModule))({ credential, endpoint: 'cas.aliyuncs.com', protocol: 'https' });
   }
   if (services.includes('dns')) clients.dns = new (Client(DNSModule))({ credential, endpoint: 'alidns.cn-hangzhou.aliyuncs.com', protocol: 'https' });
-  // Uploading and processing a dependency ZIP can outlast the SDK's short default timeout.
-  if (services.includes('fc') && config.backend) clients.fc = new (Client(FCModule))({ credential, regionId: config.region, endpoint: `fcv3.${config.region}.aliyuncs.com`, protocol: 'https', connectTimeout: 30000, readTimeout: 120000 });
-  if (services.includes('oss') && config.frontend) {
+  if (services.includes('ros') && config.backend) clients.ros = createRosClient(credential);
+  if (services.includes('oss') && (config.frontend || config.backend)) {
     const resolveCredential = async () => {
       const result = await credential.getCredential();
       return { accessKeyId: result.accessKeyId, accessKeySecret: result.accessKeySecret, stsToken: result.securityToken };
     };
-    clients.oss = new OSS({
-      ...await resolveCredential(), region: `oss-${config.region}`, bucket: config.frontend.bucket,
-      secure: true, authorizationV4: true, refreshSTSToken: resolveCredential, refreshSTSTokenInterval: 60_000,
-    });
+    const options = { ...await resolveCredential(), region: `oss-${config.region}`, secure: true, authorizationV4: true,
+      refreshSTSToken: resolveCredential, refreshSTSTokenInterval: 60_000 };
+    if (config.frontend) clients.oss = new OSS({ ...options, bucket: config.frontend.bucket });
+    if (config.backend) clients.codeOss = new OSS({ ...options, bucket: backendNames(config).codeBucket });
   }
   return clients;
 }
@@ -148,81 +147,4 @@ export async function bindFrontendDomain(oss, config, tls, { dns, attempts = 25,
       catch { console.error(`Could not remove this run's OSS verification TXT record ${createdRecordId} (${config.dns.zone}); remove it after checking the record`); }
     }
   }
-}
-
-export function functionInput(config, archive, environment) {
-  const b = config.backend;
-  return {
-    functionName: b.functionName, description: `Managed by pi-aliyun: ${config.project}`,
-    runtime: b.runtime, handler: 'index.handler', code: { zipFile: archive.toString('base64') },
-    cpu: b.cpu, memorySize: b.memorySize, diskSize: 512, timeout: b.timeout,
-    instanceConcurrency: b.instanceConcurrency, internetAccess: true,
-    customRuntimeConfig: { command: b.command.slice(0, 1), args: b.command.slice(1), port: b.port },
-    environmentVariables: { ...environment, PORT: String(b.port) },
-    ...(b.role ? { role: b.role } : {}), ...(b.vpcConfig ? { vpcConfig: b.vpcConfig } : {}),
-  };
-}
-
-const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD'];
-export function corsConfig(config) {
-  return config.frontend ? { allowOrigins: [`https://${config.frontend.domain}`], allowMethods: methods, allowHeaders: ['Content-Type', 'Authorization'], allowCredentials: true, maxAge: 600 } : undefined;
-}
-
-export async function deployBackend(fc, config, archive, environment) {
-  const b = config.backend;
-  const values = functionInput(config, archive, environment);
-  let exists;
-  try {
-    const current = await fc.getFunction(b.functionName, new FC.GetFunctionRequest({}));
-    if (current.body?.description !== values.description) throw new Error('Existing FC function is not managed by this project; choose a new function name');
-    exists = true;
-  }
-  catch (error) { if (!isMissing(error)) throw error; exists = false; }
-  if (exists) {
-    const { functionName, ...updates } = values;
-    await fc.updateFunction(functionName, new FC.UpdateFunctionRequest({ body: new FC.UpdateFunctionInput(updates) }));
-  } else await fc.createFunction(new FC.CreateFunctionRequest({ body: new FC.CreateFunctionInput(values) }));
-  // The API's historical 'concurrency' quota counts function instances, not per-instance requests.
-  await fc.putConcurrencyConfig(b.functionName, new FC.PutConcurrencyConfigRequest({ body: new FC.PutConcurrencyInput({ reservedConcurrency: b.maxInstances }) }));
-  await fc.putScalingConfig(b.functionName, new FC.PutScalingConfigRequest({ qualifier: 'LATEST', body: new FC.PutScalingConfigInput({ minInstances: 0, enableOnDemandScaling: true, horizontalScalingPolicies: [], scheduledPolicies: [] }) }));
-  const triggerConfig = JSON.stringify({ authType: 'anonymous', methods: [...methods, 'OPTIONS'], disableURLInternet: true, ...(corsConfig(config) ? { corsConfig: corsConfig(config) } : {}) });
-  try {
-    await fc.getTrigger(b.functionName, 'http');
-    await fc.updateTrigger(b.functionName, 'http', new FC.UpdateTriggerRequest({ body: new FC.UpdateTriggerInput({ triggerConfig, qualifier: 'LATEST' }) }));
-  } catch (error) {
-    if (!isMissing(error)) throw error;
-    await fc.createTrigger(b.functionName, new FC.CreateTriggerRequest({ body: new FC.CreateTriggerInput({ triggerName: 'http', triggerType: 'http', qualifier: 'LATEST', triggerConfig }) }));
-  }
-}
-
-export async function bindBackendDomain(fc, config, tls, { existingOnly = false, attempts = 25, wait = () => delay(5000) } = {}) {
-  const b = config.backend;
-  const values = {
-    domainName: b.domain, protocol: 'HTTPS', certConfig: { certName: `${config.project}-tls`, certificate: tls.certificate, privateKey: tls.privateKey },
-    routeConfig: { routes: [{ functionName: b.functionName, path: '/*', qualifier: 'LATEST', methods: [...methods, 'OPTIONS'] }] },
-    ...(corsConfig(config) ? { corsConfig: corsConfig(config) } : {}),
-  };
-  let exists;
-  let sameCertificate = false;
-  try {
-    const current = await fc.getCustomDomain(b.domain);
-    const routes = current.body?.routeConfig?.routes || [];
-    if (routes.length !== 1 || routes[0].functionName !== b.functionName || routes[0].path !== '/*') throw new Error('Existing FC domain is not exclusively routed to this project function');
-    sameCertificate = Boolean(current.body?.certConfig?.certificate && new X509Certificate(current.body.certConfig.certificate).fingerprint256 === new X509Certificate(tls.certificate).fingerprint256);
-    exists = true;
-  }
-  catch (error) { if (existingOnly || !isMissing(error)) throw error; exists = false; }
-  const { domainName, ...updates } = values;
-  if (existingOnly && sameCertificate) return;
-  if (sameCertificate) delete updates.certConfig;
-  const bind = exists
-    ? () => fc.updateCustomDomain(domainName, new FC.UpdateCustomDomainRequest({ body: new FC.UpdateCustomDomainInput(existingOnly ? { certConfig: updates.certConfig } : updates) }))
-    : () => fc.createCustomDomain(new FC.CreateCustomDomainRequest({ body: new FC.CreateCustomDomainInput(values) }));
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try { await bind(); return; }
-    catch (error) { if (error.code !== 'DomainNameNotResolved') throw error; }
-    if (attempt === 0) console.log(`Waiting for FC to recognize the CNAME: ${domainName}`);
-    if (attempt < attempts - 1) await wait();
-  }
-  throw new Error(`FC has not recognized the CNAME for ${domainName}; check DNS propagation and retry deployment`);
 }

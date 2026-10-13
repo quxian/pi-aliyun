@@ -90,9 +90,10 @@ async function main() {
     console.log(`Local artifacts ready: ${artifacts.frontendFiles?.length || 0} frontend files; ${artifacts.backendArchive?.length || 0} backend ZIP bytes.`);
     if (command === 'build') return;
   }
-  const { createClients, ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBackendDomain } = await import('./cloud.mjs');
+  const { createClients, ensureCname, deployFrontend, bindFrontendDomain } = await import('./cloud.mjs');
+  const { deployBackend, renewBackendCertificate } = await import('./ros.mjs');
   if (['status', 'diagnose', 'destroy'].includes(command)) {
-    const clients = await createClients(config, { services: ['dns', 'fc', 'oss', 'cas'] });
+    const clients = await createClients(config, { services: ['dns', 'ros', 'oss', 'cas'] });
     const { inspectApplication, planDestroy, destroyApplication } = await import('./operations.mjs');
     let report;
     if (command === 'destroy') report = options.confirm
@@ -133,7 +134,7 @@ async function main() {
     await saveResources(config, path, { state: 'renewing' });
     const clients = await createClients(config);
     if (config.frontend) await bindFrontendDomain(clients.oss, config, tls, { dns: clients.dns });
-    if (config.backend) await bindBackendDomain(clients.fc, config, tls, { existingOnly: true });
+    if (config.backend) await renewBackendCertificate(clients.ros, config, tls);
     await saveResources(config, path, { state: 'renewed' });
     console.log('TLS checked and uploaded to configured OSS/FC domains. No application build or deployment was run.');
     return;
@@ -148,9 +149,8 @@ async function main() {
   const tls = await operation('Prepare HTTPS certificate', () => prepareTls(config));
   await saveResources(config, path, { state: 'deploying' });
   if (config.backend) {
-    await operation(`Deploy FC ${config.backend.functionName}`, () => deployBackend(clients.fc, config, artifacts.backendArchive, artifacts.environment));
     await ensureCname(clients.dns, config, config.backend.domain, `${config.accountId}.${config.region}.fc.aliyuncs.com`);
-    await bindBackendDomain(clients.fc, config, tls);
+    await operation(`Deploy FC via ROS ${config.backend.functionName}`, () => deployBackend(clients, config, artifacts.backendArchive, artifacts.environment, tls));
     console.log(`Backend published: https://${config.backend.domain}`);
   }
   if (config.frontend) {

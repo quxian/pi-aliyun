@@ -11,12 +11,15 @@ export function deploymentPolicy(profile) {
   const policies = `acs:ram:*:${account}:policy/PiDatabase-pi-aliyun-*`;
   const allow = (Action, ...Resource) => ({ Effect: 'Allow', Action, Resource });
   return { Version: '1', Statement: [
-    allow(['oss:GetBucketInfo', 'oss:GetBucketTagging', 'oss:PutBucket', 'oss:PutBucketTagging', 'oss:PutBucketAcl', 'oss:PutBucketPublicAccessBlock', 'oss:PutBucketWebsite', 'oss:CreateCnameToken', 'oss:PutCname', 'oss:ListCname', 'oss:GetBucketVersioning', 'oss:ListObjects', 'oss:ListMultipartUploads', 'oss:DeleteBucket'], `acs:oss:*:${account}:${buckets}`),
-    allow(['oss:PutObject', 'oss:DeleteObject', 'oss:AbortMultipartUpload'], `acs:oss:*:${account}:${buckets}/*`),
+    allow(['oss:GetBucketInfo', 'oss:GetBucketAcl', 'oss:GetBucketTagging', 'oss:PutBucket', 'oss:PutBucketTagging', 'oss:PutBucketAcl', 'oss:PutBucketPublicAccessBlock', 'oss:PutBucketWebsite', 'oss:CreateCnameToken', 'oss:PutCname', 'oss:ListCname', 'oss:GetBucketVersioning', 'oss:ListObjects', 'oss:ListMultipartUploads', 'oss:DeleteBucket'], `acs:oss:*:${account}:${buckets}`),
+    allow(['oss:GetObject', 'oss:PutObject', 'oss:DeleteObject', 'oss:AbortMultipartUpload'], `acs:oss:*:${account}:${buckets}/*`),
     allow(['alidns:DescribeDomainRecords', 'alidns:AddDomainRecord', 'alidns:UpdateDomainRecord', 'alidns:DeleteDomainRecord'], `acs:alidns::${account}:domain/${zone}`),
+    allow(['ros:CreateStack', 'ros:UpdateStack', 'ros:DeleteStack', 'ros:GetStack', 'ros:GetTemplate', 'ros:ListStackEvents'], `acs:ros:${region}:${account}:stack/*`),
+    allow(['ros:ListStacks'], '*'),
+    // ROS acts with this identity's permissions; FC actions are still required.
     // Some FC deployment APIs require account-level authorization.
-    allow(['fc:GetFunction', 'fc:CreateFunction', 'fc:UpdateFunction', 'fc:PutConcurrencyConfig', 'fc:PutScalingConfig', 'fc:GetTrigger', 'fc:CreateTrigger', 'fc:UpdateTrigger', 'fc:GetCustomDomain', 'fc:CreateCustomDomain', 'fc:UpdateCustomDomain'], '*'),
-    allow(['fc:DeleteFunction', 'fc:ListTriggers', 'fc:DeleteTrigger', 'fc:ListCustomDomains', 'fc:DeleteConcurrencyConfig', 'fc:DeleteScalingConfig'], '*'),
+    allow(['fc:GetFunction', 'fc:CreateFunction', 'fc:UpdateFunction', 'fc:GetConcurrencyConfig', 'fc:PutConcurrencyConfig', 'fc:GetTrigger', 'fc:CreateTrigger', 'fc:UpdateTrigger', 'fc:GetCustomDomain', 'fc:CreateCustomDomain', 'fc:UpdateCustomDomain'], '*'),
+    allow(['fc:DeleteFunction', 'fc:ListTriggers', 'fc:DeleteTrigger', 'fc:ListCustomDomains', 'fc:DeleteConcurrencyConfig'], '*'),
     allow(['fc:DeleteCustomDomain'], `acs:fc:${region}:${account}:custom-domains/*.${zone}`),
     allow(['yundun-cert:DescribeSSLCertificatePrivateKey', 'yundun-cert:DescribeSSLCertificatePublicKeyDetail', 'yundun-cert:CreateSSLCertificate'], '*'),
     allow(['yundun-cert:ListUserCertificateOrder', 'yundun-cert:ListCloudResources', 'yundun-cert:DeleteUserCertificate'], '*'),

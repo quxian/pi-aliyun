@@ -6,7 +6,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import CredentialModule from '@alicloud/credentials';
 import STSModule from '@alicloud/sts20150401';
 import DNSModule, * as DNS from '@alicloud/alidns20150109';
-import FCModule, * as FC from '@alicloud/fc20230330';
+import * as ROS from '@alicloud/ros20190910';
+import { createRosClient } from './ros.mjs';
 import CASModule, * as CAS from '@alicloud/cas20200407';
 import OTSModule, * as OTS from '@alicloud/tablestore20201209';
 import RAMModule, * as RAM from '@alicloud/ram20150501';
@@ -96,7 +97,7 @@ export async function inspectConnection({ selection, region = 'cn-hangzhou' } = 
   const domains = [];
   const options = { credential, protocol: 'https', connectTimeout: 10000, readTimeout: 15000 };
   const dns = new (Client(DNSModule))({ ...options, endpoint: 'alidns.cn-hangzhou.aliyuncs.com' });
-  const fc = new (Client(FCModule))({ ...options, regionId: region, endpoint: `fcv3.${region}.aliyuncs.com` });
+  const ros = createRosClient(credential);
   const ots = new (Client(OTSModule))({ ...options, regionId: region, endpoint: `tablestore.${region}.aliyuncs.com` });
   const cas = new (Client(CASModule))({ ...options, endpoint: 'cas.aliyuncs.com' });
   const ram = new (Client(RAMModule))({ ...options, endpoint: 'ram.aliyuncs.com' });
@@ -114,7 +115,7 @@ export async function inspectConnection({ selection, region = 'cn-hangzhou' } = 
         region: `oss-${region}`, secure: true, authorizationV4: true, timeout: 15000 });
       await oss.listBuckets({ 'max-keys': 1 });
     } },
-    { service: 'fc', action: 'fc:ListFunctions', run: () => fc.listFunctions(new FC.ListFunctionsRequest({ limit: 1 })) },
+    { service: 'ros', action: 'ros:ListStacks', message: 'FC 通过阿里云资源编排（ROS）部署；已验证资源栈读取，实际部署权限在发布时验证。', run: () => ros.listStacks(new ROS.ListStacksRequest({ regionId: region, pageSize: 1 })) },
     { service: 'ots', action: 'ots:ListInstance', run: () => ots.listInstances(new OTS.ListInstancesRequest({ maxResults: 1 })) },
     { service: 'cas', action: 'yundun-cert:ListUserCertificateOrder', run: () => cas.listUserCertificateOrder(new CAS.ListUserCertificateOrderRequest({ currentPage: 1, showSize: 1 })) },
     { service: 'ram', action: 'ram:ListPolicies', run: () => ram.listPolicies(new RAM.ListPoliciesRequest({ policyType: 'Custom', maxItems: 1 })) },

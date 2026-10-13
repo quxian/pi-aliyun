@@ -7,6 +7,13 @@ if (!token || token.length < 32) throw new Error('Set a random NOTES_TOKEN with 
 const digest = (value) => createHash('sha256').update(value).digest();
 const expectedToken = digest(`Bearer ${token}`);
 const server = createServer(async (req, res) => {
+  if (process.env.APP_ORIGIN && req.headers.origin === process.env.APP_ORIGIN) {
+    res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const reply = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
   if (req.url === '/health' && req.method === 'GET') return reply(200, { ok: true, storage: 'tablestore' });
   if (!timingSafeEqual(digest(req.headers.authorization || ''), expectedToken)) return reply(401, { error: 'Authentication required' });

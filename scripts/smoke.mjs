@@ -6,10 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createPublicKey, sign, verify } from 'node:crypto';
 import acme from 'acme-client';
-import * as FC from '@alicloud/fc20230330';
 import { validateConfig, plan } from '../skills/aliyun/scripts/config.mjs';
 import { collectFiles, createArchive, buildArtifacts } from '../skills/aliyun/scripts/artifacts.mjs';
-import { ensureCname, deployFrontend, deployBackend, bindFrontendDomain, bindBackendDomain, cacheControl, websiteXml, functionInput } from '../skills/aliyun/scripts/cloud.mjs';
+import { ensureCname, deployFrontend, bindFrontendDomain, cacheControl, websiteXml } from '../skills/aliyun/scripts/cloud.mjs';
 import { uploadPrivateKey } from '../skills/aliyun/scripts/tls.mjs';
 import { deploymentPolicy } from '../skills/aliyun/scripts/policy.mjs';
 import { registerRenewal, renewRegistered, renewalUnits } from '../skills/aliyun/scripts/renewal.mjs';
@@ -74,38 +73,7 @@ try {
   assert.match(cacheControl('assets/app-1234abcd.js'), /immutable/);
   assert.match(websiteXml(true), /<HttpStatus>200<\/HttpStatus>/);
   assert(!websiteXml(false).includes('ErrorDocument'));
-  const input = functionInput(config, artifacts.backendArchive, artifacts.environment);
-  const request = new FC.CreateFunctionRequest({ body: new FC.CreateFunctionInput(input) });
-  request.validate();
-  assert.deepEqual(input.customRuntimeConfig.command, ['/var/fc/lang/nodejs20/bin/node']);
-  assert.deepEqual(input.customRuntimeConfig.args, ['server.mjs']);
-
-  const calls = [];
-  let functionExists = false;
-  let triggerExists = false;
-  let domainExists = false;
-  let domainAttempts = 0;
-  const fc = {
-    getFunction: async () => { if (!functionExists) throw missing('FunctionNotFound'); return { body: { description: input.description } }; },
-    createFunction: async (value) => { value.validate(); functionExists = true; calls.push('createFunction'); },
-    updateFunction: async (_name, value) => { value.validate(); calls.push('updateFunction'); },
-    putConcurrencyConfig: async (_name, value) => { assert.equal(value.body.reservedConcurrency, 1); },
-    putScalingConfig: async (_name, value) => { assert.equal(value.body.minInstances, 0); },
-    getTrigger: async () => { if (!triggerExists) throw missing('TriggerNotFound'); },
-    createTrigger: async (_name, value) => { triggerExists = true; assert.equal(JSON.parse(value.body.triggerConfig).disableURLInternet, true); calls.push('createTrigger'); },
-    updateTrigger: async () => calls.push('updateTrigger'),
-    getCustomDomain: async () => { if (!domainExists) throw missing('DomainNameNotFound'); return { body: { routeConfig: { routes: [{ functionName: config.backend.functionName, path: '/*' }] } } }; },
-    createCustomDomain: async (value) => { value.validate(); if (++domainAttempts === 1) throw missing('DomainNameNotResolved'); domainExists = true; calls.push('createDomain'); },
-    updateCustomDomain: async (_name, value) => { value.validate(); calls.push('updateDomain'); },
-  };
   const tls = { certificate: 'mock certificate', privateKey: 'mock private key' };
-  await deployBackend(fc, config, artifacts.backendArchive, artifacts.environment);
-  await deployBackend(fc, config, artifacts.backendArchive, artifacts.environment);
-  await bindBackendDomain(fc, config, tls, { wait: async () => {} });
-  assert.equal(domainAttempts, 2);
-  await bindBackendDomain(fc, config, tls, { existingOnly: true });
-  assert.deepEqual(calls, ['createFunction', 'createTrigger', 'updateFunction', 'updateTrigger', 'createDomain', 'updateDomain']);
-  await assert.rejects(deployBackend({ ...fc, getFunction: async () => ({ body: { description: 'another project' } }) }, config, archiveAgain, {}), /not managed/);
 
   const records = [];
   let dnsWrites = 0;
@@ -210,7 +178,7 @@ try {
   assert.match(units['pi-aliyun-renew.service'], /renew-all --registry/);
   assert.match(units['pi-aliyun-renew.timer'], /Persistent=true/);
   assert.throws(() => renewalUnits({ user: 'root', registryPath: registry }), /non-root/);
-  console.log('Smoke passed: local CLI/build/archive, SDK models, FC create/update, OSS publication/ownership verification, DNS conflicts/cleanup, cross-project policy and renewal registry/units. No cloud APIs called.');
+  console.log('Smoke passed: local CLI/build/archive, OSS publication/ownership verification, DNS conflicts/cleanup, cross-project policy and renewal registry/units. No cloud APIs called.');
 } finally {
   delete process.env.PI_ALIYUN_SMOKE_DATABASE;
   await rm(temp, { recursive: true, force: true });

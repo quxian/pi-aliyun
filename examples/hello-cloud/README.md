@@ -7,7 +7,7 @@
 在本目录执行 `node build.mjs`。分别在两个终端启动：
 
 ```sh
-LOCAL_DEMO_ORIGIN=http://127.0.0.1:8080 node dist/backend/server.mjs
+APP_ORIGIN=http://127.0.0.1:8080 node dist/backend/server.mjs
 python3 -m http.server 8080 --bind 127.0.0.1 --directory dist/frontend
 ```
 

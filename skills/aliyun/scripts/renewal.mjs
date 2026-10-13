@@ -56,16 +56,16 @@ export async function unregisterRenewal(configPath, registryPath = defaultRegist
   await rename(temporary, registryPath);
 }
 
-async function runRenewal(configPath, environment) {
+async function runRenewal(configPath, environment, signal) {
   try {
-    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { env: environment, timeout: 600_000, maxBuffer: 1024 * 1024 });
+    const result = await execute(process.execPath, [cli, 'renew', '--config', configPath], { env: environment, signal, timeout: 900_000, maxBuffer: 1024 * 1024 });
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   } catch (error) {
     // The child CLI already redacts SDK errors; never print execFile's full error or environment.
     if (error.stdout) process.stdout.write(error.stdout);
     if (error.stderr) process.stderr.write(error.stderr);
-    throw new Error(error.killed ? 'renewal exceeded 10 minutes' : 'renewal command failed');
+    throw new Error(error.killed ? 'renewal was interrupted or exceeded 15 minutes' : 'renewal command failed');
   }
 }
 
@@ -75,10 +75,20 @@ export async function renewRegistered(registryPath = defaultRegistry(), { run = 
   // not credentials, so renewals keep using the connection chosen at deployment.
   const environment = { ...process.env, ...connectionEnvironment(registry.connection) };
   const failures = [];
-  for (const path of [...new Set(registry.projects)]) {
-    console.log(`Checking scheduled certificate: ${path}`);
-    try { await run(path, environment); }
-    catch { failures.push(path); console.error(`Scheduled certificate check failed: ${path}`); }
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.once('SIGTERM', cancel);
+  process.once('SIGINT', cancel);
+  try {
+    for (const path of [...new Set(registry.projects)]) {
+      controller.signal.throwIfAborted();
+      console.log(`Checking scheduled certificate: ${path}`);
+      try { await run(path, environment, controller.signal); }
+      catch { failures.push(path); console.error(`Scheduled certificate check failed: ${path}`); }
+    }
+  } finally {
+    process.removeListener('SIGTERM', cancel);
+    process.removeListener('SIGINT', cancel);
   }
   if (failures.length) throw new Error(`${failures.length} certificate check(s) failed; inspect the preceding project logs`);
   console.log(`Scheduled certificate checks completed: ${registry.projects.length} project(s)`);

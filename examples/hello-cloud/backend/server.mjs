@@ -5,10 +5,10 @@ const port = Number(process.env.PORT || 9000);
 const server = createServer(async (request, response) => {
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
-  if (process.env.LOCAL_DEMO_ORIGIN && request.headers.origin === process.env.LOCAL_DEMO_ORIGIN) {
-    response.setHeader('Access-Control-Allow-Origin', process.env.LOCAL_DEMO_ORIGIN);
+  if (process.env.APP_ORIGIN && request.headers.origin === process.env.APP_ORIGIN) {
+    response.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN);
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     response.setHeader('Vary', 'Origin');
   }
   const send = (status, data) => { response.writeHead(status); response.end(JSON.stringify(data)); };

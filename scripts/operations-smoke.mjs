@@ -8,6 +8,7 @@ import { inspectApplication, planDestroy, destroyApplication, dnsTargets } from 
 import { verifyApplication } from '../skills/aliyun/scripts/verify.mjs';
 import { errorInfo } from '../skills/aliyun/scripts/errors.mjs';
 import { saveResources } from '../skills/aliyun/scripts/resources.mjs';
+import { backendNames } from '../skills/aliyun/scripts/ros.mjs';
 import { applicationCertificates } from '../skills/aliyun/scripts/certificates.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'pi-aliyun-operations-'));
@@ -18,24 +19,32 @@ try {
   await writeFile(path, JSON.stringify(raw));
   await writeFile(registry, JSON.stringify({ version: 1, projects: [path, '/srv/other/aliyun.json'] }));
   await saveResources(config, path);
-  const state = { function: true, domain: true, trigger: true, bucket: true, database: true, role: true, policy: true, attached: true,
+  const state = { codeBucket: true, codeObjects: ['code/' + 'a'.repeat(64) + '.zip'], function: true, domain: true, trigger: true, bucket: true, database: true, role: true, policy: true, attached: true,
     tables: [names.prefix + 'notes'], objects: ['index.html'], certificate: true, uploads: [], wrongBucket: false, shared: false, versioned: false };
   const writes = [], checked = request => request.validate();
   const records = dnsTargets(config).map((target, i) => ({ recordId: String(i), RR: target.domain.slice(0, -(config.dns.zone.length + 1)), type: 'CNAME', line: 'default', status: 'ENABLE', value: target.value }));
   const domains = [config.frontend.domain, config.backend.domain];
   const certificate = { fingerprint: 'a'.repeat(40), publicKeySha256: 'b'.repeat(64), serialNumber: 'c'.repeat(32) };
   const clients = {
-    fc: {
-      getFunction: async () => state.function ? { body: { description: `Managed by pi-aliyun: ${config.project}`, state: 'Active', role: config.backend.role } } : absent('FunctionNotFound'),
-      getCustomDomain: async () => state.domain ? { body: { protocol: 'HTTPS', routeConfig: { routes: [{ functionName: config.backend.functionName, path: '/*' }] } } } : absent('DomainNameNotFound'),
-      getTrigger: async () => state.trigger ? { body: { triggerConfig: JSON.stringify({ disableURLInternet: true }) } } : absent('TriggerNotFound'),
-      listTriggers: async (_name, req) => { checked(req); return { body: { triggers: [{ triggerName: 'http', triggerType: 'http' }] } }; },
-      listCustomDomains: async req => { checked(req); return { body: { customDomains: [{ domainName: config.backend.domain, routeConfig: { routes: [{ functionName: config.backend.functionName }] } }] } }; },
-      deleteCustomDomain: async () => { state.domain = false; writes.push('domain'); },
-      deleteTrigger: async () => { state.trigger = false; writes.push('trigger'); },
-      deleteScalingConfig: async (_name, req) => { checked(req); writes.push('scaling'); },
-      deleteConcurrencyConfig: async () => { writes.push('concurrency'); },
-      deleteFunction: async () => { state.function = false; writes.push('function'); },
+    ros: {
+      listStacks: async req => { checked(req); return { body: { stacks: state.function ? [{ stackName: backendNames(config).stackName, stackId: 'stack-123', status: 'CREATE_COMPLETE' }] : [] } }; },
+      getStack: async req => { checked(req); return { body: { stackName: backendNames(config).stackName, stackId: 'stack-123', status: state.function ? 'CREATE_COMPLETE' : 'DELETE_COMPLETE', tags: [{ key: 'pi-aliyun-project', value: config.project }] } }; },
+      getTemplate: async () => ({ body: { templateBody: { Description: `Managed by pi-aliyun: ${config.project}`, Resources: {
+        Function: { Type: 'ALIYUN::FC3::Function', Properties: { FunctionName: config.backend.functionName, Code: { OssBucketName: backendNames(config).codeBucket } } },
+        Concurrency: { Type: 'ALIYUN::FC3::ConcurrencyConfig' }, HttpTrigger: { Type: 'ALIYUN::FC3::Trigger' },
+        Domain: { Type: 'ALIYUN::FC3::CustomDomain', Properties: { DomainName: config.backend.domain, Protocol: 'HTTPS' } },
+      } } } }),
+      deleteStack: async req => { checked(req); state.function = false; writes.push('stack'); },
+    },
+    codeOss: {
+      getBucketInfo: async () => state.codeBucket ? { bucket: { Owner: { ID: config.accountId }, Location: config.region } } : absent('NoSuchBucket'),
+      getBucketTags: async () => ({ tag: { 'pi-aliyun-project': config.project, 'pi-aliyun-purpose': 'backend-code' } }),
+      getBucketACL: async () => ({ acl: 'private' }),
+      getBucketVersioning: async () => ({}),
+      listV2: async () => ({ objects: state.codeObjects.map(name => ({ name })) }),
+      listUploads: async () => ({ uploads: [] }),
+      deleteMulti: async items => { state.codeObjects = []; writes.push('code-objects'); return { deleted: items }; },
+      deleteBucket: async () => { state.codeBucket = false; writes.push('code-bucket'); },
     },
     oss: {
       getBucketInfo: async () => state.bucket ? { bucket: { Owner: { ID: config.accountId }, Location: `oss-${config.region}` } } : absent('NoSuchBucket'),
@@ -97,7 +106,7 @@ try {
   }
   const deleted = await destroyApplication(clients, config, path, { database, confirm: config.project, registry, attempts: 2, wait: async () => { state.database = false; } });
   assert(deleted.deleted);
-  for (const item of ['domain', 'trigger', 'function', 'objects', 'bucket', 'table', 'database', 'detach', 'role', 'version', 'policy', 'certificate']) assert(writes.includes(item), item);
+  for (const item of ['stack', 'code-objects', 'code-bucket', 'objects', 'bucket', 'table', 'database', 'detach', 'role', 'version', 'policy', 'certificate']) assert(writes.includes(item), item);
   assert.deepEqual(JSON.parse(await readFile(registry)).projects, ['/srv/other/aliyun.json']);
   const count = writes.length;
   assert((await destroyApplication(clients, config, path, { database, confirm: config.project, registry })).deleted);

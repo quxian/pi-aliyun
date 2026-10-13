@@ -28,7 +28,7 @@ GitHub、Gitee 私有仓库也可以使用。先为**实际运行 Pi 的系统�
 
 连接自动检查身份及各服务的只读访问。检查结果保留具体读取操作、错误码和请求编号，不输出凭据；读取成功不代表部署写权限已验证，读取被拒绝也不代表全部部署操作不可用。主账号显示其账号权限依据，RAM 身份保留“未完整验证”，实际部署遇到拒绝时再定位所需权限。地域和域名配置不会收窄 OAuth 凭据或形成 RAM 隔离。
 
-函数计算目前存在 [OAuth 请求兼容问题](https://github.com/aliyun/aliyun-cli/issues/1271)。命中时连接检查会将 FC 标为暂不可用，其他服务仍可独立使用；追加 RAM 权限或反复授权不能解决此问题。
+FC 后端统一通过阿里云资源编排 ROS 管理，复用现有浏览器授权，本地与服务器使用同一流程。连接检查读取 ROS 资源栈，不直接请求 FC 的 OAuth 接口。代码包自动存入应用专用的私有 OSS Bucket；函数、实例上限、HTTP 触发器和 HTTPS 域名归同一资源栈管理，无需用户配置 ROS、Bucket 或新的部署凭据。ROS 仍使用当前身份的云资源权限，读取检查通过不代表所有部署写权限已验证。
 
 在部署服务用户的 `~/.config/pi-aliyun/account.json` 保存非敏感配置：
 
@@ -89,7 +89,7 @@ pi-aliyun deploy
 
 模板包含前后端配置，部署前省略不需要的整个 `frontend` 或 `backend`；没有持久化需求就不配置 `database`。接手已有代码时，先核对业务行为与部署形态的适配。前端须为静态文件或框架的静态导出；后端保留普通 HTTP 服务形态，监听 `0.0.0.0` 和 `PORT`。后端及依赖须适配 FC Linux x86_64，不能直接上传本机原生模块；ZIP 上限 60 MiB。参考[无数据库示例](examples/hello-cloud/README.md)和[持久化示例](examples/durable-notes/README.md)。
 
-前端 API 地址需在业务代码或构建配置中设为实际后端域名。前后端同时配置时，CLI 自动为 FC 触发器和自定义域名设置 CORS，允许配置中的 HTTPS 前端来源及 `Content-Type`、`Authorization` 请求头；应用避免重复写入冲突的 CORS 响应头，其它来源或自定义请求头需单独适配并验证。CORS 不代替业务鉴权。模板的目录、构建命令和运行时也需匹配实际项目。
+前端 API 地址需在业务代码或构建配置中设为实际后端域名。跨域请求由后端应用处理 CORS：仅允许实际 HTTPS 前端来源及所需的方法、请求头，并处理 OPTIONS；ROS 自定义域名没有暴露 CORS 配置。Agent 在应用代码中完成并验收，不要求用户配置云控制台。CORS 不代替业务鉴权。模板的目录、构建命令和运行时也需匹配实际项目。
 
 `envFrom` 只读取部署进程的环境变量，不自动加载 `.env`。业务秘密应持久保存在产物目录外、已忽略的私有文件中（权限 0600），每次部署时加载，例如 `node --env-file=/path/to/private.env /path/to/pi-aliyun/skills/aliyun/scripts/cli.mjs deploy --config /path/to/project/aliyun.json`。普通更新复用既有秘密，不把变量缺失误当成需要重置口令；前端只使用公开配置。
 
@@ -97,7 +97,7 @@ pi-aliyun deploy
 
 `doctor` 检查本地配置；`plan` 展示目标资源，不查询实时差异；`build` 只构建；`db-plan` 估算选定数据库的费用；`db-inspect` 只读检查数据库和角色；`db-setup` 单独执行部署已包含的数据库准备。
 
-部署会保存不含秘密的 `.aliyun/resources.json`。重复发布复用本应用资源，归属冲突会停止；不会接管其它应用或删除数据库。同属一个系统或服务互相调用，不自动意味着共享数据库；共享须基于明确的数据共享需求并记录归属，详见[数据库说明](skills/aliyun/references/database.md)。
+部署会保存不含秘密的 `.aliyun/resources.json`。0.9 起只管理 ROS 后端；旧的直连 FC 应用会明确拒绝自动接管，需要先处理原有资源，不能删除清单来绕过归属检查。重复发布复用本应用资源，归属冲突会停止；不会接管其它应用或删除数据库。同属一个系统或服务互相调用，不自动意味着共享数据库；共享须基于明确的数据共享需求并记录归属，详见[数据库说明](skills/aliyun/references/database.md)。
 
 ## 查看、排障与删除
 
@@ -110,11 +110,11 @@ pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json
 pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json --confirm pi-aliyun-myapp
 ```
 
-`status` 读取真实资源、DNS、数据库和证书状态；`diagnose` 加上本地检查和 HTTPS 检查，输出错误码、请求 ID 与排查方向，不输出业务响应正文、环境秘密或证书私钥。它不自动购买日志服务，也不修改应用。`verify` 可单独重新验收网络与健康接口。
+`status` 读取 ROS 部署状态、私有代码 Bucket、DNS、数据库和证书状态；ROS 状态不等同于实时服务健康，使用 `verify` 验收 HTTPS。`diagnose` 加上本地检查和 HTTPS 检查，输出错误码、请求 ID 与排查方向，不输出业务响应正文、环境秘密或证书私钥。它不自动购买日志服务，也不修改应用。`verify` 可单独重新验收网络与健康接口。
 
-不带 `--confirm` 的 `destroy` 只预览。确认执行后删除本应用 DNS、FC 域名和函数、OSS 对象及 Bucket、独立数据库、运行角色和策略、已记录的上传证书，并移除续期登记。数据库异步释放会等待并复核；失败时保留清单，修正原因后用同一命令继续。删除会永久清除云端数据，不自动备份。源码、配置和本地私有文件保留，由用户另行决定是否删除。
+不带 `--confirm` 的 `destroy` 只预览。确认执行后删除本应用 DNS、ROS 栈内的 FC 域名和函数、私有代码包及 Bucket、前端 OSS 对象及 Bucket、独立数据库、运行角色和策略、已记录的上传证书，并移除续期登记。数据库异步释放会等待并复核；失败时保留清单，修正原因后用同一命令继续。删除会永久清除云端数据，不自动备份。源码、配置和本地私有文件保留，由用户另行决定是否删除。
 
-共享数据库在使用方删除时保留；所有者仍被其它应用权限策略引用时拒绝删除。额外域名或触发器、版本化 Bucket、自定义 VPC 等超出工具创建范围的资源，会在删除前报告需要单独处理。未知证书指纹或含其它域名的证书保留并列明。资源清单在部署过程中保存，包括证书指纹；不要先删除项目目录再要求工具清理云资源。
+共享数据库在使用方删除时保留；所有者仍被其它应用权限策略引用时拒绝删除。ROS 模板新增的其它资源、版本化 Bucket、自定义 VPC 会阻止自动删除。不要在工具外给托管函数添加依赖；工具不扫描栈外新增的 FC 域名或触发器，这些资源需人工处理。未知证书指纹或含其它域名的证书保留并列明。资源清单在部署过程中保存，包括证书指纹；不要先删除项目目录再要求工具清理云资源。
 
 ## 域名和 HTTPS
 
@@ -137,7 +137,7 @@ pi-aliyun destroy --config /srv/projects/pi-aliyun-myapp/aliyun.json --confirm p
 
 仅在用户同意 CA 条款后设置 `agreeToTerms`，既有同意可按范围沿用。默认使用 Let's Encrypt，通过 DNS-01 签发；OSS 域名验证也自动完成，只清理本次创建的临时 TXT 记录。有效证书直接复用，进入续期窗口再签发。私钥保存在持久私有目录，不提交 Git、不上传到前端或后端产物。
 
-配置账号并启用 ACME 的项目在部署后自动登记续期；也可手动登记。Linux 管理员只需安装一次定时器：
+配置账号并启用 ACME 的项目在部署后自动登记续期。Client Pi 在运行期间每 6 小时检查一次，启动后也会补查，本地与服务器无需额外安装；本地电脑关机或 Client Pi 停止期间无法续期。独立使用 CLI 的长期运行主机可由管理员安装以下定时器，不要与 Client Pi 重复调度：
 
 ```sh
 # 部署服务用户执行
@@ -148,12 +148,12 @@ sudo systemctl start pi-aliyun-renew.service
 systemctl list-timers pi-aliyun-renew.timer
 ```
 
-每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。Client Pi 登记续期时，会在 registry 保存连接和账号配置的文件路径，调度器无需额外传入 Agent 的环境变量；registry 不保存凭据内容。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。包升级保持安装路径；换路径后重新安装定时器。`destroy` 会移除该应用的续期登记。
+每天按服务器时区 03:15–03:30 检查，以指定服务用户执行并复用其凭据和网络。Client Pi 登记续期时，会在 registry 保存连接和账号配置的文件路径，调度器无需额外传入 Agent 的环境变量；registry 不保存凭据内容。日志见 `journalctl -u pi-aliyun-renew.service`；其它环境可每天运行 `renew-all --registry /path/to/renewal.json`。独立 CLI 的定时器需指向当前包路径；换路径后重新安装定时器。`destroy` 会移除该应用的续期登记。
 
 ## 运行边界
 
 OSS 网站文件公开读取，部署会关闭应用专用 Bucket 的阻止公共访问开关，不修改账号级开关。Bucket 只放公开构建产物；工具跳过常见秘密文件，但不代替产物检查。FC HTTP 入口由应用实现鉴权，默认 FC 公网 URL 被关闭，发布的 API 自定义域名使用 HTTPS。OSS HTTPS 可用，但工具不强制禁用其 HTTP 访问。
 
-发布不是云端事务；失败时可能已有部分资源完成，修正原因后重试。函数使用 `LATEST`，最小实例数为 0，部署会替换声明的环境变量。数据库和旧静态文件不会因重复发布被删除。工具不提供用户登录系统、监控告警或费用硬上限；实例配额只限制并发，不限制累计消费。
+发布不是云端事务；失败时可能已有部分资源完成，修正原因后重试。函数使用 `LATEST`，不配置预留实例，部署会替换声明的环境变量。环境变量和证书使用 ROS NoEcho 参数，不将秘密写入模板正文；这不会限制管理身份查看或修改云资源的权限。旧代码包保留以支持更新回滚，随应用删除。数据库和旧静态文件不会因重复发布被删除。工具不提供用户登录系统、监控告警或费用硬上限；实例配额只限制并发，不限制累计消费。
 
 费用依据实际存储、请求和流量，核对 [FC 计费](https://help.aliyun.com/zh/functioncompute/billing-overview-of-fc)及[数据库费用说明](skills/aliyun/references/database.md)。数据库选型应保留业务所需的数据语义，超出当前自动化范围时按实际产品落实创建和维护流程。

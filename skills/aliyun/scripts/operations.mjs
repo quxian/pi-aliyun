@@ -1,4 +1,4 @@
-import * as FC from '@alicloud/fc20230330';
+import { inspectBackend, inspectCodeBucket, deleteBackendStack, backendNames } from './ros.mjs';
 import * as DNS from '@alicloud/alidns20150109';
 import * as OTS from '@alicloud/tablestore20201209';
 import * as RAM from '@alicloud/ram20150501';
@@ -28,24 +28,8 @@ export async function inspectApplication(clients, config, configPath, { database
   };
   const tasks = [];
   if (config.backend) {
-    const b = config.backend;
-    tasks.push(inspect('function', async () => {
-      const { body } = await clients.fc.getFunction(b.functionName, new FC.GetFunctionRequest({}));
-      ensure(body.description === `Managed by pi-aliyun: ${config.project}`, 'FC function belongs to another application');
-      return { name: b.functionName, runtime: body.runtime, state: body.state, cpu: body.cpu, memorySize: body.memorySize, lastModified: body.lastModifiedTime,
-        ok: (!body.state || body.state === 'Active') && (body.role === b.role || (!body.role && !b.role)), roleMatches: body.role === b.role || (!body.role && !b.role) };
-    }));
-    tasks.push(inspect('api-domain', async () => {
-      const { body } = await clients.fc.getCustomDomain(b.domain);
-      const routes = body.routeConfig?.routes || [];
-      ensure(routes.length === 1 && routes[0].functionName === b.functionName && routes[0].path === '/*', 'FC domain is not exclusively owned by this function');
-      return { domain: b.domain, protocol: body.protocol, ok: body.protocol === 'HTTPS' };
-    }));
-    tasks.push(inspect('http-trigger', async () => {
-      const { body } = await clients.fc.getTrigger(b.functionName, 'http');
-      const settings = JSON.parse(body.triggerConfig);
-      return { disableURLInternet: settings.disableURLInternet, ok: settings.disableURLInternet === true };
-    }));
+    tasks.push(inspect('backend-stack', () => inspectBackend(clients.ros, config)));
+    tasks.push(inspect('code-bucket', () => inspectCodeBucket(clients.codeOss, config)));
   }
   if (config.frontend) tasks.push(inspect('bucket', async () => {
     const bucket = config.frontend.bucket;
@@ -118,16 +102,19 @@ export async function planDestroy(clients, config, configPath, options = {}) {
     const result = await clients.oss.request({ method: 'GET', bucket: config.frontend.bucket, subres: 'cname', xmlResponse: true, successStatuses: [200] });
     ensure(array(result.data?.Cname).every(item => item.Domain === config.frontend.domain), 'Bucket has additional domain bindings');
   });
-  if (get('function')?.exists) await inspect('function', async () => {
+  if (get('backend-stack')?.exists) await inspect('backend-stack', async () => {
     ensure(!config.backend.vpcConfig, 'Custom VPC resources require a separate teardown plan');
-    const { body } = await clients.fc.listTriggers(config.backend.functionName, new FC.ListTriggersRequest({ limit: 100 }));
-    ensure(!body.nextToken && (body.triggers || []).every(trigger => trigger.triggerName === 'http' && trigger.triggerType === 'http'), 'Function has additional triggers');
-    let nextToken;
+    ensure(!get('backend-stack').state.endsWith('_IN_PROGRESS') || get('backend-stack').state === 'DELETE_IN_PROGRESS', 'ROS deployment is still running');
+  });
+  if (get('code-bucket')?.exists) await inspect('code-bucket', async () => {
+    const version = await clients.codeOss.getBucketVersioning(backendNames(config).codeBucket);
+    ensure(!version.versionStatus, 'Versioned backend code bucket requires a retention decision');
+    let continuation;
     do {
-      const { body: domains } = await clients.fc.listCustomDomains(new FC.ListCustomDomainsRequest({ limit: 100, nextToken }));
-      for (const domain of domains.customDomains || []) ensure(domain.domainName === config.backend.domain || !(domain.routeConfig?.routes || []).some(route => route.functionName === config.backend.functionName), 'Function is used by another custom domain');
-      nextToken = domains.nextToken;
-    } while (nextToken);
+      const listed = await clients.codeOss.listV2({ 'max-keys': 1000, 'continuation-token': continuation });
+      ensure((listed.objects || []).every(item => /^code\/[a-f0-9]{64}\.zip$/.test(item.name)), 'Code bucket contains files outside this application deployment');
+      continuation = listed.nextContinuationToken;
+    } while (continuation);
   });
   if (database && !config.database.shared && get('database')?.exists) await inspect('database', async () => {
     const names = databaseNames(config);
@@ -151,30 +138,9 @@ export async function destroyApplication(clients, config, configPath, { confirm,
   for (const target of dnsTargets(config)) for (const record of get(`dns:${target.domain}`).records || []) {
     await operation(`Delete DNS ${target.domain}`, () => clients.dns.deleteDomainRecord(new DNS.DeleteDomainRecordRequest({ recordId: record.recordId })));
   }
-  if (get('api-domain')?.exists) await operation('Delete API domain', () => clients.fc.deleteCustomDomain(config.backend.domain));
-  if (get('function')?.exists) {
-    if (get('http-trigger')?.exists) await operation('Delete HTTP trigger', () => clients.fc.deleteTrigger(config.backend.functionName, 'http'));
-    await operation('Delete function scaling settings', async () => {
-      const ignoreAbsent = async run => { try { await run(); } catch (error) { if (!missing(error) && !['ScalingConfigNotFound', 'ConcurrencyConfigNotFound'].includes(error.code)) throw error; } };
-      await ignoreAbsent(() => clients.fc.deleteScalingConfig(config.backend.functionName, new FC.DeleteScalingConfigRequest({ qualifier: 'LATEST' })));
-      await ignoreAbsent(() => clients.fc.deleteConcurrencyConfig(config.backend.functionName));
-    });
-    await operation('Delete function', () => clients.fc.deleteFunction(config.backend.functionName));
-  }
-  if (get('bucket')?.exists) await operation('Empty and delete application bucket', async () => {
-    for (;;) {
-      const { uploads } = await clients.oss.listUploads({ 'max-uploads': 1000 });
-      if (!uploads.length) break;
-      for (const item of uploads) await clients.oss.abortMultipartUpload(item.name, item.uploadId);
-    }
-    for (;;) {
-      const { objects = [] } = await clients.oss.listV2({ 'max-keys': 1000 });
-      if (!objects.length) break;
-      const deleted = await clients.oss.deleteMulti(objects.map(item => item.name));
-      ensure(deleted.deleted.length === objects.length, 'Some OSS objects were not deleted; inspect retention/permissions and retry');
-    }
-    await clients.oss.deleteBucket(config.frontend.bucket);
-  });
+  if (get('backend-stack')?.exists) await operation('Delete backend ROS stack', () => deleteBackendStack(clients.ros, config));
+  if (get('code-bucket')?.exists) await operation('Delete backend code bucket', () => emptyBucket(clients.codeOss, backendNames(config).codeBucket));
+  if (get('bucket')?.exists) await operation('Empty and delete application bucket', () => emptyBucket(clients.oss, config.frontend.bucket));
   if (database) {
     const names = databaseNames(config);
     if (!config.database.shared && get('database')?.exists && get('database').state !== 'deleting') await operation('Delete application database', async () => {
@@ -205,4 +171,19 @@ export async function destroyApplication(clients, config, configPath, { confirm,
   ensure(!remaining.length, `Deletion is incomplete: ${JSON.stringify(remaining)}`);
   await saveResources(config, configPath, { state: 'deleted' });
   return { project: config.project, deleted: true, retained: plan.retained.filter(Boolean) };
+}
+
+async function emptyBucket(oss, bucket) {
+  for (;;) {
+    const { uploads = [] } = await oss.listUploads({ 'max-uploads': 1000 });
+    if (!uploads.length) break;
+    for (const item of uploads) await oss.abortMultipartUpload(item.name, item.uploadId);
+  }
+  for (;;) {
+    const { objects = [] } = await oss.listV2({ 'max-keys': 1000 });
+    if (!objects.length) break;
+    const deleted = await oss.deleteMulti(objects.map(item => item.name));
+    ensure(deleted.deleted.length === objects.length, 'Some OSS objects were not deleted; inspect retention/permissions and retry');
+  }
+  await oss.deleteBucket(bucket);
 }

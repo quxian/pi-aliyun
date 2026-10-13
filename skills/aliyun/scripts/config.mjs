@@ -58,7 +58,7 @@ export function validateConfig(raw, baseDir) {
   if (config.backend) {
     const b = config.backend;
     keys(b, ['functionName', 'codeDir', 'build', 'domain', 'runtime', 'command', 'port', 'cpu', 'memorySize', 'timeout', 'instanceConcurrency', 'maxInstances', 'environment', 'envFrom', 'role', 'vpcConfig', 'healthPath'], 'backend');
-    if (!/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(b.functionName || '')) fail('backend.functionName is invalid');
+    if (!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(b.functionName || '')) fail('backend.functionName is invalid');
     string(b.codeDir, 'backend.codeDir');
     b.codeDir = resolve(baseDir, b.codeDir);
     b.runtime ??= 'custom.debian10';
@@ -159,7 +159,7 @@ export function plan(config) {
     mode: 'Local desired state only; no cloud query, build, credential lookup, or mutation',
     project: config.project, accountId: config.accountId, region: config.region,
     frontend: config.frontend ? { bucket: config.frontend.bucket, action: 'Create if absent; only reuse this project-tagged bucket; disable bucket-level public access block, configure public-read website, upload files, bind HTTPS domain; retain old files', directory: config.frontend.dir, domain: config.frontend.domain, spa: config.frontend.spa, build: Boolean(config.frontend.build) } : undefined,
-    backend: config.backend ? { functionName: config.backend.functionName, action: 'Create/update LATEST code and declared settings; anonymous HTTP trigger; min instances 0; replace owned domain route', directory: config.backend.codeDir, domain: config.backend.domain, build: Boolean(config.backend.build), cpu: config.backend.cpu, memorySize: config.backend.memorySize, maxInstances: config.backend.maxInstances, environmentNames: [...Object.keys(config.backend.environment), ...Object.keys(config.backend.envFrom)], vpc: Boolean(config.backend.vpcConfig) } : undefined,
+    backend: config.backend ? { functionName: config.backend.functionName, action: 'ROS manages LATEST function, instance cap, HTTP trigger and HTTPS domain; private OSS code storage is automatic; no provisioned instances', directory: config.backend.codeDir, domain: config.backend.domain, build: Boolean(config.backend.build), cpu: config.backend.cpu, memorySize: config.backend.memorySize, maxInstances: config.backend.maxInstances, environmentNames: [...Object.keys(config.backend.environment), ...Object.keys(config.backend.envFrom)], vpc: Boolean(config.backend.vpcConfig) } : undefined,
     dns: { zone: config.dns.zone, action: 'Create or update one default-line CNAME per domain; create and clean up owned TXT records for OSS domain verification when needed; conflicting record types stop deployment' },
     tls: { mode: config.tls.acme ? 'Reuse valid certificate or ACME DNS-01 issuance/renewal; creates and cleans up its own TXT records' : 'Upload supplied PEM certificate and private key', domains: [config.frontend?.domain, config.backend?.domain].filter(Boolean) },
     database: databasePlan(config),

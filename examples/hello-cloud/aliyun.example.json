@@ -22,7 +22,7 @@
     "timeout": 15,
     "instanceConcurrency": 5,
     "maxInstances": 1,
-    "environment": { "NODE_ENV": "production" }
+    "environment": { "NODE_ENV": "production", "APP_ORIGIN": "https://demo.example.com" }
   },
   "dns": { "zone": "example.com", "ttl": 600 },
   "tls": {
